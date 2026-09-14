@@ -58,13 +58,93 @@ VALID_WHICH="baseline bolt bolt-rewrite"
 source "$APP_DIR/app.sh"
 
 # ---------------------------------------------------------------------------
-# Generic defaults (overridable by the app adapter or the environment)
+# Architecture and generic defaults (overridable by the app adapter or env)
 # ---------------------------------------------------------------------------
+# Normalize the machine architecture so pipeline/app code stays arch-neutral.
+# aarch64 and x86_64 are the supported targets; anything else is passed through.
+case "$(uname -m)" in
+  aarch64|arm64) HARNESS_ARCH=aarch64 ;;
+  x86_64|amd64)  HARNESS_ARCH=x86_64 ;;
+  *)             HARNESS_ARCH="$(uname -m)" ;;
+esac
+
 : "${BUILD_JOBS:=$(nproc)}"
-# Empty CPU list disables pinning. Defaults are a reasonable starting point
-# for a big.LITTLE aarch64 host; each app overrides as appropriate.
-: "${SERVER_CPUS:=0-3}"
-: "${CLIENT_CPUS:=8-11}"
+
+# BOLT-friendly compiler flags that are only valid/needed on some arches.
+# x86_64 needs nothing extra: GCC's default CET/IBT is left enabled.
+harness_cflags_arch() {
+  case "$HARNESS_ARCH" in
+    aarch64) echo "-mbranch-protection=none" ;;   # keep PAC/BTI out
+  esac
+}
+
+# ELF relocation-family prefix used to count relocations in build-info.txt.
+harness_reloc_prefix() {
+  case "$HARNESS_ARCH" in
+    aarch64) echo "R_AARCH64" ;;
+    x86_64)  echo "R_X86_64" ;;
+    *)       echo "R_" ;;
+  esac
+}
+
+# Expand a Linux CPU list ("0-3,8" or "0-7") into a comma-separated id list.
+_harness_expand_cpus() { # <spec>
+  local spec="$1" part lo hi i out="" sep=""
+  local -a parts
+  spec="${spec//[[:space:]]/}"
+  IFS=',' read -ra parts <<< "$spec"
+  for part in "${parts[@]}"; do
+    case "$part" in
+      *-*) lo="${part%-*}"; hi="${part#*-}" ;;
+      *)   lo="$part"; hi="$part" ;;
+    esac
+    for ((i = lo; i <= hi; i++)); do
+      out="${out}${sep}${i}"; sep=","
+    done
+  done
+  echo "$out"
+}
+
+# Print "server client" CPU lists to pin both sides, or nothing if unknown.
+# Prefers the cgroup cpuset, then the online CPUs.
+_harness_detect_cpus() {
+  local spec="" list srv cli half n f
+  local -a cpus
+  for f in /sys/fs/cgroup/cpuset.cpus.effective \
+           /sys/fs/cgroup/cpuset.cpus \
+           /sys/devices/system/cpu/online; do
+    [ -r "$f" ] || continue
+    spec="$(cat "$f")"
+    [ -n "$spec" ] && break
+  done
+  [ -n "$spec" ] || return 0
+  list="$(_harness_expand_cpus "$spec")"
+  [ -n "$list" ] || return 0
+  IFS=',' read -ra cpus <<< "$list"
+  n="${#cpus[@]}"
+  [ "$n" -ge 2 ] || return 0
+  half=$(( n / 2 ))
+  srv="$(IFS=','; echo "${cpus[*]:0:half}")"
+  cli="$(IFS=','; echo "${cpus[*]:half}")"
+  echo "$srv $cli"
+}
+
+# Empty CPU list disables pinning. The aarch64 reference host keeps the
+# historical 0-3/8-11 split; other hosts split the available CPUs in half.
+if [ "$HARNESS_ARCH" = aarch64 ]; then
+  : "${SERVER_CPUS:=0-3}"
+  : "${CLIENT_CPUS:=8-11}"
+else
+  _harness_cpus="$(_harness_detect_cpus)"
+  if [ -n "$_harness_cpus" ]; then
+    : "${SERVER_CPUS:=${_harness_cpus%% *}}"
+    : "${CLIENT_CPUS:=${_harness_cpus#* }}"
+  else
+    : "${SERVER_CPUS:=}"
+    : "${CLIENT_CPUS:=}"
+  fi
+  unset _harness_cpus
+fi
 
 # ---------------------------------------------------------------------------
 # Helpers

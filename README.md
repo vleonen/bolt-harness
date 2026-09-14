@@ -1,7 +1,7 @@
 # bolt-harness
 
 A multi-application benchmark harness that measures **llvm-bolt**
-optimizations on real server applications on aarch64.
+optimizations on real server applications on aarch64 and x86_64.
 
 The pipeline mirrors the proven `redis/bolt-bench` flow:
 
@@ -118,13 +118,21 @@ adapter. Common ones:
 | `HARNESS_WORK` | `<repo>/work` | state root (container: `/work`) |
 | `BOLT_BIN_DIR` | `$HOME/src/llvm-project/build/bin` | `llvm-bolt`, `merge-fdata` |
 | `BOLT_OPT_FLAGS` | bolt README flags | optimization flags for `optimize.sh` |
-| `SERVER_CPUS` / `CLIENT_CPUS` | app-specific | `taskset -c` CPU lists (empty = off) |
+| `SERVER_CPUS` / `CLIENT_CPUS` | arch-aware | `taskset -c` CPU lists (empty = off) |
+
+Inside a container, `BOLT_BIN_DIR` is set by `rebuild.sh`, which auto-detects
+the LLVM build dir containing `bin/llvm-bolt` under `LLVM_SRC` (override with
+`LLVM_BUILD_DIR`). A checkout whose build lives in `build23/` therefore needs
+no extra flags. **Build flags are architecture-conditional**: `-mbranch-protection=none`
+is applied on aarch64 only; x86_64 keeps GCC's default CET/IBT.
 
 ## Requirements
 
-- aarch64 Linux host with `llvm-bolt` (needs a build that supports AArch64
-  instrumentation and `-rewrite`).
+- aarch64 or x86_64 Linux host with `llvm-bolt` (a build that supports the
+  target's instrumentation and `-rewrite`).
 - Docker (the container only supplies the build toolchain; BOLT itself runs
   from the host checkout mounted read-only).
 - BOLT cannot rewrite pointer-auth or stack-protector code, so builds disable
-  PAC/BTI, stack protector and `-freorder-blocks-and-partition`.
+  PAC/BTI (aarch64) and the stack protector, plus GCC's
+  `-freorder-blocks-and-partition`. x86_64 keeps GCC's default CET/IBT; if BOLT
+  rejects endbr64 binaries, add `-fcf-protection=none` in the app `build.sh`.

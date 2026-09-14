@@ -1,4 +1,4 @@
-# Ubuntu 24.04 (aarch64) container for building and benchmarking PostgreSQL
+# Ubuntu 24.04 (aarch64/amd64) container for building and benchmarking PostgreSQL
 # with the bolt-harness pipeline.
 #
 # PostgreSQL refuses to run as root, so the image runs as a non-root
@@ -30,8 +30,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         procps \
     && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd -g "$GID" postgres \
-    && useradd -m -u "$UID" -g "$GID" -s /bin/bash postgres
+# -o (non-unique) lets this succeed when the base image already uses the host
+# uid/gid (ubuntu:24.04 ships uid/gid 1000, a common host value).
+RUN groupadd -o -g "$GID" postgres \
+    && useradd -o -m -u "$UID" -g "$GID" -s /bin/bash postgres
 
 USER postgres
 WORKDIR /work

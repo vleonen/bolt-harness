@@ -52,7 +52,9 @@ if [ -z "${CXX:-}" ]; then
 fi
 
 build_cflags() { # <mode>
-  local flags="-O2 -fno-omit-frame-pointer -fno-stack-protector -mbranch-protection=none"
+  local flags="-O2 -fno-omit-frame-pointer -fno-stack-protector" arch_flags
+  arch_flags="$(harness_cflags_arch)"        # aarch64: -mbranch-protection=none
+  [ -n "$arch_flags" ] && flags="$flags $arch_flags"
   # GCC 8+ enables -freorder-blocks-and-partition at -O2; BOLT is incompatible.
   case "$CC" in
     *gcc*) flags="$flags -fno-reorder-blocks-and-partition" ;;
@@ -68,7 +70,7 @@ mariadbd_ldflags() { # <mode>
 }
 
 build_mode() { # <mode>
-  local mode="$1" cflags ldflags src build prefix bin server cand
+  local mode="$1" cflags ldflags src build prefix bin server cand reloc_prefix
   cflags="$(build_cflags "$mode")"
   ldflags="$(mariadbd_ldflags "$mode")"
   src="${APP_SRC:-$WORK/$APP}"
@@ -116,9 +118,11 @@ build_mode() { # <mode>
   [ -n "$server" ] || die "mariadbd not found under $prefix/{sbin,bin} after install"
   cp "$server" "$bin/mariadbd"
 
+  reloc_prefix="$(harness_reloc_prefix)"
   {
     echo "app:        $APP ($MARIADB_VERSION)"
     echo "mode:       $mode"
+    echo "arch:       $(uname -m)"
     echo "date:       $(date -Is)"
     echo "CC:         $CC ($($CC --version | head -1))"
     echo "CXX:        $CXX ($($CXX --version | head -1))"
@@ -127,7 +131,7 @@ build_mode() { # <mode>
     echo "install:    $prefix"
     echo
     file "$bin/mariadbd"
-    echo "relocs:     $(readelf -rW "$bin/mariadbd" | grep -c 'R_AARCH64' || true) entries"
+    echo "relocs:     $(readelf -rW "$bin/mariadbd" | grep -c "$reloc_prefix" || true) entries"
     echo "rela.text:  $(readelf -SW "$bin/mariadbd" | grep -c '\.rela\.text' || true) section(s)"
     echo "size:       $(du -h "$bin/mariadbd" | cut -f1)"
     echo "sha256:     $(sha256sum "$bin/mariadbd" | cut -d' ' -f1)"

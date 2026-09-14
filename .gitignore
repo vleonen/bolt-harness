@@ -1,2 +1,5 @@
 # Container state and pipeline artifacts (bind-mounted at /work).
 work/
+
+# Local agent instructions (kept out of git per project policy).
+AGENTS.md

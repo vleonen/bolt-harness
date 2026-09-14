@@ -33,9 +33,9 @@ mkdir -p "$IDIR"
 
 info "Instrumenting $BASE with BOLT (dump interval: ${PROFILE_SLEEP_TIME}s, counters not cleared)"
 # BOLT_INSTRUMENT_EXTRA_FLAGS lets callers pass toolchain-specific flags that
-# are only valid for the installed llvm-bolt (e.g.
-# --drop-cortex-a53-843419-veneers, required by LLVM 23+ on aarch64 baselines
-# linked with the C-A53 erratum 843419 workaround).
+# are only valid for the installed llvm-bolt. aarch64/LLVM 23+ only:
+# --drop-cortex-a53-843419-veneers (required when the baseline was linked with
+# the C-A53 erratum 843419 workaround; do not pass it on x86_64).
 # shellcheck disable=SC2086  # BOLT_INSTRUMENT_EXTRA_FLAGS is intentionally word-split
 "$BOLT" "$BASE" -o "$INSTR" \
   -instrument \

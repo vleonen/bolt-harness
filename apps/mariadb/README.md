@@ -17,8 +17,8 @@ against a locally prepared `sbtest` dataset.
 `rebuild.sh` builds `bolt-harness-mariadb:ubuntu24.04`, starts a container and
 bind-mounts:
 
-- host LLVM checkout **read-only** at `/llvm` (BOLT runs from
-  `/llvm/build/bin/llvm-bolt`)
+- host LLVM checkout **read-only** at `/llvm` (BOLT runs from the build dir
+  `rebuild.sh` auto-detects, e.g. `/llvm/build23/bin/llvm-bolt`)
 - the harness **read-only** at `/harness`
 - `work/` **read-write** at `/work`
 
@@ -27,8 +27,8 @@ bind-mounts:
 ./rebuild.sh stop     # tear down
 ```
 
-Overridable: `LLVM_SRC` (`$HOME/src/llvm-project`),
-`MARIADB_VERSION` (`mariadb-11.4.13`).
+Overridable: `LLVM_SRC` (`$HOME/src/llvm-project`), `LLVM_BUILD_DIR`
+(auto-detected under `LLVM_SRC`), `MARIADB_VERSION` (`mariadb-11.4.13`).
 
 ## Running the pipeline
 
@@ -43,6 +43,8 @@ Stage by stage / interactively:
 ```bash
 docker exec -it bolt-harness-mariadb bash
 export APP=mariadb HARNESS_WORK=/work BOLT_BIN_DIR=/llvm/build/bin CC=gcc
+# BOLT_BIN_DIR is auto-set by `rebuild.sh exec`; adjust the build dir here
+# (e.g. /llvm/build23/bin) only for manual `docker exec` sessions.
 
 /harness/apps/mariadb/build.sh pie          # build baseline + install tree
 /harness/pipeline/profile.sh pie            # instrument + sysbench load + merge
@@ -61,18 +63,20 @@ SKIP_BUILD=1 SKIP_PROFILE=1 SKIP_OPTIMIZE=1 \
 
 ```
 -O2 -fno-omit-frame-pointer -fno-stack-protector
--mbranch-protection=none [-fno-reorder-blocks-and-partition]   # GCC only
+[-mbranch-protection=none]              # aarch64 only
+[-fno-reorder-blocks-and-partition]     # GCC only
 -DSECURITY_HARDENED=OFF -DWITH_UNIT_TESTS=OFF -DWITH_MARIABACKUP=OFF
 -DWITH_SYSTEMD=OFF -DWITH_WSREP=OFF
 -DWITH_MYSQLD_LDFLAGS='-Wl,-q'          # pie
 -DWITH_MYSQLD_LDFLAGS='-no-pie -Wl,-q'  # no-pie
 ```
 
-`-mbranch-protection=none` keeps PAC/BTI out (BOLT cannot rewrite pointer-auth
-code); `-fno-stack-protector`/`SECURITY_HARDENED=OFF` remove SSP; `-Wl,-q`
-keeps linker relocations so BOLT can recover control flow. The executable-only
-`WITH_MYSQLD_LDFLAGS` avoids propagating `-no-pie` into the plugin `.so`
-builds.
+`-mbranch-protection=none` (aarch64 only) keeps PAC/BTI out (BOLT cannot
+rewrite pointer-auth code); `-fno-stack-protector`/`SECURITY_HARDENED=OFF`
+remove SSP; `-Wl,-q` keeps linker relocations so BOLT can recover control flow.
+On x86_64 GCC's default CET/IBT is kept (add `-fcf-protection=none` here only
+if BOLT rejects the endbr64 binary). The executable-only `WITH_MYSQLD_LDFLAGS`
+avoids propagating `-no-pie` into the plugin `.so` builds.
 
 Each mode installs to `$STATE/installs/<mode>` and snapshots
 `$BINARIES/<mode>/mariadbd`; `build-info.txt` records flags, ELF type,
@@ -94,7 +98,7 @@ measured workload. Defaults:
 | `PROFILE_SLEEP_TIME` | `10` | BOLT profile dump interval (s) |
 | `INNODB_BUFFER_POOL_SIZE` | `4G` | sized to hold the dataset in memory |
 | `PROFILE_PORT` / `BENCH_PORT` | `3307` / `3308` | TCP ports |
-| `SERVER_CPUS` / `CLIENT_CPUS` | `0-3` / `8-11` | CPU pinning |
+| `SERVER_CPUS` / `CLIENT_CPUS` | arch-aware (`0-3`/`8-11` on aarch64) | CPU pinning |
 
 `MYSQLD_EXTRA_ARGS` disables the binlog, slows/drops durable flush
 (`--innodb-flush-log-at-trx-commit=2 --innodb-doublewrite=0`) and turns off the

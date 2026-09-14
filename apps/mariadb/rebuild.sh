@@ -8,6 +8,7 @@
 #   ./rebuild.sh stop      stop and remove the container
 #
 # Overridable: LLVM_SRC (default ${HOME}/src/llvm-project),
+#              LLVM_BUILD_DIR (default: auto-detected under LLVM_SRC),
 #              MARIADB_VERSION (default mariadb-11.4.13),
 #              HARNESS_ROOT (default: repo root two levels up).
 set -euo pipefail
@@ -18,11 +19,6 @@ IMAGE="bolt-harness-mariadb:ubuntu24.04"
 NAME="bolt-harness-mariadb"
 LLVM_SRC="${LLVM_SRC:-${HOME}/src/llvm-project}"
 MARIADB_VERSION="${MARIADB_VERSION:-mariadb-11.4.13}"
-
-BENCH_ENV=(APP=mariadb
-           HARNESS_WORK=/work
-           BOLT_BIN_DIR=/llvm/build/bin
-           CC=gcc)
 
 msg() { echo "==> $*"; }
 
@@ -46,6 +42,37 @@ esac
 
 [ -d "$LLVM_SRC" ] || { echo "ERROR: LLVM_SRC not found: $LLVM_SRC" >&2; exit 1; }
 
+# Locate the LLVM build tree (the one containing bin/llvm-bolt). LLVM_BUILD_DIR
+# wins; otherwise prefer build/, then build23/, then any immediate subdir.
+LLVM_BUILD_DIR="${LLVM_BUILD_DIR:-}"
+if [ -z "$LLVM_BUILD_DIR" ]; then
+  for d in build build23; do
+    if [ -x "$LLVM_SRC/$d/bin/llvm-bolt" ]; then LLVM_BUILD_DIR="$d"; break; fi
+  done
+fi
+if [ -z "$LLVM_BUILD_DIR" ]; then
+  for p in "$LLVM_SRC"/*/bin/llvm-bolt; do
+    [ -x "$p" ] || continue
+    LLVM_BUILD_DIR="$(basename "$(dirname "$(dirname "$p")")")"
+    break
+  done
+fi
+[ -n "$LLVM_BUILD_DIR" ] || {
+  echo "ERROR: no LLVM build with bin/llvm-bolt under $LLVM_SRC (set LLVM_BUILD_DIR)" >&2
+  exit 1
+}
+[ -x "$LLVM_SRC/$LLVM_BUILD_DIR/bin/llvm-bolt" ] || {
+  echo "ERROR: $LLVM_SRC/$LLVM_BUILD_DIR/bin/llvm-bolt not found (check LLVM_SRC/LLVM_BUILD_DIR)" >&2
+  exit 1
+}
+# Path where LLVM_SRC is mounted read-only inside the container.
+BOLT_BIN_DIR="/llvm/$LLVM_BUILD_DIR/bin"
+
+BENCH_ENV=(APP=mariadb
+           HARNESS_WORK=/work
+           BOLT_BIN_DIR="$BOLT_BIN_DIR"
+           CC=gcc)
+
 msg "Building image $IMAGE"
 docker build -t "$IMAGE" "$APP_DIR"
 
@@ -68,19 +95,19 @@ else
 fi
 
 msg "Environment inside $NAME:"
-docker exec "$NAME" bash -lc '
+docker exec "$NAME" env "BOLT_BIN_DIR=$BOLT_BIN_DIR" bash -lc '
   echo "os:       $(. /etc/os-release; echo "$PRETTY_NAME")"
   echo "gcc:      $(gcc --version | head -1)"
   echo "cmake:    $(cmake --version | head -1)"
   echo "sysbench: $(sysbench --version)"
   echo "mariadb:  $(ls -d /work/mariadb 2>/dev/null && (cd /work/mariadb && git describe --tags 2>/dev/null || true))"
-  /llvm/build/bin/llvm-bolt --version | head -3
+  "$BOLT_BIN_DIR"/llvm-bolt --version | head -3
 '
 
 msg ""
 msg "Container '$NAME' is running. Enter it with:"
 msg "  docker exec -it $NAME bash"
-msg "Pipeline env: APP=mariadb HARNESS_WORK=/work BOLT_BIN_DIR=/llvm/build/bin CC=gcc"
+msg "Pipeline env: APP=mariadb HARNESS_WORK=/work BOLT_BIN_DIR=$BOLT_BIN_DIR CC=gcc"
 msg ""
 msg "Run the full pipeline:"
 msg "  $0 exec /harness/pipeline/run-all.sh pie no-pie"

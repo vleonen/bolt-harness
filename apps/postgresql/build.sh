@@ -45,7 +45,9 @@ done
 : "${CC:=gcc}"
 
 build_cflags() { # <mode>
-  local flags="-O2 -fno-omit-frame-pointer -fno-stack-protector -mbranch-protection=none"
+  local flags="-O2 -fno-omit-frame-pointer -fno-stack-protector" arch_flags
+  arch_flags="$(harness_cflags_arch)"        # aarch64: -mbranch-protection=none
+  [ -n "$arch_flags" ] && flags="$flags $arch_flags"
   # GCC 8+ enables -freorder-blocks-and-partition at -O2; BOLT is incompatible.
   case "$CC" in
     *gcc*) flags="$flags -fno-reorder-blocks-and-partition" ;;
@@ -61,7 +63,7 @@ ex_ldflags() { # <mode>
 }
 
 build_mode() { # <mode>
-  local mode="$1" cflags ldflags src build prefix bin server
+  local mode="$1" cflags ldflags src build prefix bin server reloc_prefix
   cflags="$(build_cflags "$mode")"
   ldflags="$(ex_ldflags "$mode")"
   src="${APP_SRC:-$WORK/$APP}"
@@ -102,9 +104,11 @@ build_mode() { # <mode>
   [ -x "$server" ] || die "$server not produced"
   cp "$server" "$bin/postgres"
 
+  reloc_prefix="$(harness_reloc_prefix)"
   {
     echo "app:        $APP ($POSTGRES_VERSION)"
     echo "mode:       $mode"
+    echo "arch:       $(uname -m)"
     echo "date:       $(date -Is)"
     echo "CC:         $CC ($($CC --version | head -1))"
     echo "CFLAGS:     $cflags"
@@ -112,7 +116,7 @@ build_mode() { # <mode>
     echo "install:    $prefix"
     echo
     file "$bin/postgres"
-    echo "relocs:     $(readelf -rW "$bin/postgres" | grep -c 'R_AARCH64' || true) entries"
+    echo "relocs:     $(readelf -rW "$bin/postgres" | grep -c "$reloc_prefix" || true) entries"
     echo "rela.text:  $(readelf -SW "$bin/postgres" | grep -c '\.rela\.text' || true) section(s)"
     echo "size:       $(du -h "$bin/postgres" | cut -f1)"
     echo "sha256:     $(sha256sum "$bin/postgres" | cut -d' ' -f1)"

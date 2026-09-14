@@ -27,8 +27,8 @@
 # ---------------------------------------------------------------------------
 : "${PROFILE_PORT:=55432}"
 : "${BENCH_PORT:=55433}"
-: "${SERVER_CPUS:=0-3}"
-: "${CLIENT_CPUS:=8-11}"
+# SERVER_CPUS / CLIENT_CPUS defaults are centralized in lib/common.sh
+# (arch-aware and overridable from the environment).
 
 # ---------------------------------------------------------------------------
 # Source / build

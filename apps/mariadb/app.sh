@@ -23,8 +23,8 @@
 # ---------------------------------------------------------------------------
 : "${PROFILE_PORT:=3307}"
 : "${BENCH_PORT:=3308}"
-: "${SERVER_CPUS:=0-3}"   # InnoDB is multi-threaded; give it the fast cores
-: "${CLIENT_CPUS:=8-11}"
+# SERVER_CPUS / CLIENT_CPUS defaults are centralized in lib/common.sh
+# (arch-aware and overridable from the environment).
 
 # ---------------------------------------------------------------------------
 # Source / build

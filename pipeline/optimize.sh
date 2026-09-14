@@ -49,11 +49,13 @@ run_bolt() {
     rm -f "$out"
     return 1
   fi
-  if ! "$out" --version >/dev/null 2>&1; then
+  # Guard the health check: a miscompiled -rewrite binary can loop forever on
+  # --version (seen on x86_64 no-pie). BOLT_VERIFY_TIMEOUT bounds it.
+  if ! timeout "${BOLT_VERIFY_TIMEOUT:-30}" "$out" --version >/dev/null 2>&1; then
     if [ "$required" = 1 ]; then
-      die "optimized binary $out does not run (--version failed)"
+      die "optimized binary $out does not run (--version failed or timed out)"
     fi
-    info "WARNING: optimized binary $out does not run (--version failed); skipping variant"
+    info "WARNING: optimized binary $out did not run (--version failed or timed out); skipping variant"
     rm -f "$out"
     return 1
   fi

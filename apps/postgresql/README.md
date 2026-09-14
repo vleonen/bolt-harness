@@ -19,8 +19,8 @@ container that runs as a **non-root `postgres` user** (PostgreSQL refuses to
 run as root) whose uid/gid match the host, so `work/` artifacts are
 host-owned. It bind-mounts:
 
-- host LLVM checkout **read-only** at `/llvm` (BOLT runs from
-  `/llvm/build/bin/llvm-bolt`)
+- host LLVM checkout **read-only** at `/llvm` (BOLT runs from the build dir
+  `rebuild.sh` auto-detects, e.g. `/llvm/build23/bin/llvm-bolt`)
 - the harness **read-only** at `/harness`
 - `work/` **read-write** at `/work`
 
@@ -29,8 +29,8 @@ host-owned. It bind-mounts:
 ./rebuild.sh stop     # tear down
 ```
 
-Overridable: `LLVM_SRC` (`$HOME/src/llvm-project`),
-`POSTGRES_VERSION` (`REL_17_11`).
+Overridable: `LLVM_SRC` (`$HOME/src/llvm-project`), `LLVM_BUILD_DIR`
+(auto-detected under `LLVM_SRC`), `POSTGRES_VERSION` (`REL_17_11`).
 
 ## Running the pipeline
 
@@ -45,6 +45,8 @@ Stage by stage / interactively:
 ```bash
 docker exec -it bolt-harness-postgresql bash
 export APP=postgresql HARNESS_WORK=/work BOLT_BIN_DIR=/llvm/build/bin CC=gcc
+# BOLT_BIN_DIR is auto-set by `rebuild.sh exec`; adjust the build dir here
+# (e.g. /llvm/build23/bin) only for manual `docker exec` sessions.
 
 /harness/apps/postgresql/build.sh pie          # build baseline + install tree
 /harness/pipeline/profile.sh pie               # instrument + pgbench load + merge
@@ -64,17 +66,19 @@ SKIP_BUILD=1 SKIP_PROFILE=1 SKIP_OPTIMIZE=1 \
 ```
 --without-icu --without-readline --without-zlib --without-llvm
 CFLAGS='-O2 -fno-omit-frame-pointer -fno-stack-protector
-        -mbranch-protection=none [-fno-reorder-blocks-and-partition]'
+        [-mbranch-protection=none]            # aarch64 only
+        [-fno-reorder-blocks-and-partition]'  # GCC only
 LDFLAGS_EX='-Wl,-q'          # pie
 LDFLAGS_EX='-no-pie -Wl,-q'  # no-pie
 ```
 
-`-mbranch-protection=none` keeps PAC/BTI out (BOLT cannot rewrite pointer-auth
-code); `-fno-stack-protector` removes SSP; `-Wl,-q` keeps linker relocations
-so BOLT can recover control flow. BOLT link flags go through `LDFLAGS_EX`
-(executables only), so shared modules built via `LDFLAGS_SL` stay PIC.
-PostgreSQL JIT is disabled (`--without-llvm`) to keep the served code
-comparable.
+`-mbranch-protection=none` (aarch64 only) keeps PAC/BTI out (BOLT cannot
+rewrite pointer-auth code); `-fno-stack-protector` removes SSP; `-Wl,-q` keeps
+linker relocations so BOLT can recover control flow. On x86_64 GCC's default
+CET/IBT is kept (add `-fcf-protection=none` here only if BOLT rejects the
+endbr64 binary). BOLT link flags go through `LDFLAGS_EX` (executables only), so
+shared modules built via `LDFLAGS_SL` stay PIC. PostgreSQL JIT is disabled
+(`--without-llvm`) to keep the served code comparable.
 
 Each mode installs to `$STATE/installs/<mode>` and snapshots
 `$BINARIES/<mode>/postgres`; `build-info.txt` records flags, ELF type,
@@ -97,7 +101,7 @@ matches the measured workload. Defaults:
 | `PROFILE_SLEEP_TIME` | `10` | BOLT profile dump interval (s) |
 | `SHARED_BUFFERS` | `4GB` | sized to hold the dataset in memory |
 | `PROFILE_PORT` / `BENCH_PORT` | `55432` / `55433` | TCP ports |
-| `SERVER_CPUS` / `CLIENT_CPUS` | `0-3` / `8-11` | CPU pinning |
+| `SERVER_CPUS` / `CLIENT_CPUS` | arch-aware (`0-3`/`8-11` on aarch64) | CPU pinning |
 
 The server runs with `fsync=off`, `synchronous_commit=off`,
 `full_page_writes=off` and `autovacuum=off` to reduce run-to-run noise; these
@@ -113,8 +117,8 @@ Set `RESET_DATA=1` to wipe and re-initialize the dataset.
   dump always holds the complete profile. The workload must run longer than the
   dump interval; `profile.sh` enforces this.
 - **PostgreSQL's computed-goto expression interpreter** may stress BOLT's
-  AArch64 indirect-branch analysis; capture any `llvm-bolt` failure as a
-  finding.
+  indirect-branch analysis (AArch64 in particular); capture any `llvm-bolt`
+  failure as a finding.
 - **`-rewrite` is experimental**; check the build-id of
   `postgres.bolt-rewrite` — `-rewrite` currently leaves the baseline build-id
   in place (see the BOLT `-rewrite` build-id notes).
