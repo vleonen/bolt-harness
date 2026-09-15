@@ -34,9 +34,13 @@ DATA="$PROFILES/$MODE/profile.merged.fdata"
 # skipped by run-all.sh and shows up as "n/a" in compare.sh.
 run_bolt() {
   local variant="$1" required="$2"; shift 2
-  local out
+  local out verify_log rc
   out="$(which_binary "$MODE" "$variant")"
   local log="$BINARIES/$MODE/bolt-$variant.log"
+  verify_log="$BINARIES/$MODE/bolt-$variant.verify.log"
+  # Clean any artifacts left by a previous failed run so they can't be
+  # mistaken for a fresh result.
+  rm -f "$out.failed" "$verify_log"
   info "BOLT [$MODE/$variant]: $BOLT_OPT_FLAGS $*"
   # shellcheck disable=SC2086  # BOLT_OPT_FLAGS is intentionally word-split
   if ! "$BOLT" "$BASE" -o "$out" -data="$DATA" $BOLT_OPT_FLAGS "$@" \
@@ -46,20 +50,28 @@ run_bolt() {
       die "BOLT failed for [$MODE/$variant] (full log: $log)"
     fi
     info "WARNING: BOLT failed for [$MODE/$variant]; skipping variant (log: $log)"
-    rm -f "$out"
+    # Preserve a partial output for forensics instead of deleting it.
+    [ -f "$out" ] && mv "$out" "$out.failed"
     return 1
   fi
   # Guard the health check: a miscompiled -rewrite binary can loop forever on
-  # --version (seen on x86_64 no-pie). BOLT_VERIFY_TIMEOUT bounds it.
-  if ! timeout "${BOLT_VERIFY_TIMEOUT:-30}" "$out" --version >/dev/null 2>&1; then
+  # --version (seen on x86_64 no-pie). BOLT_VERIFY_TIMEOUT bounds it. stderr
+  # and the exit status are captured so a failing variant leaves forensics.
+  timeout "${BOLT_VERIFY_TIMEOUT:-30}" "$out" --version \
+    > /dev/null 2> "$verify_log"
+  rc=$?
+  if [ $rc -ne 0 ]; then
     if [ "$required" = 1 ]; then
-      die "optimized binary $out does not run (--version failed or timed out)"
+      tail -20 "$verify_log" >&2
+      die "optimized binary $out does not run (--version exit $rc; log: $verify_log)"
     fi
-    info "WARNING: optimized binary $out did not run (--version failed or timed out); skipping variant"
-    rm -f "$out"
+    info "WARNING: optimized binary $out did not run (--version exit $rc); keeping as $out.failed"
+    { echo "exit status: $rc (124 = timed out)"; } >> "$verify_log" 2>/dev/null || true
+    mv "$out" "$out.failed"
     return 1
   fi
-  info "[$MODE/$variant] -> $out ($(du -h "$out" | cut -f1))"
+  rm -f "$verify_log"
+  info "[$MODE/$variant] -> $out ($(du -h "$out" | cut -f1) raw, $(stripped_size_bytes "$out") bytes stripped)"
   return 0
 }
 

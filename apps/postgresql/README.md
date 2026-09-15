@@ -80,6 +80,18 @@ endbr64 binary). BOLT link flags go through `LDFLAGS_EX` (executables only), so
 shared modules built via `LDFLAGS_SL` stay PIC. PostgreSQL JIT is disabled
 (`--without-llvm`) to keep the served code comparable.
 
+`build.sh` also passes `pgac_cv_computed_goto=no` to `configure`, disabling
+PostgreSQL's computed-goto (direct-threaded) expression interpreter
+(`EEO_USE_COMPUTED_GOTO` → switch-based dispatch). The static `dispatch_table`
+of 99 `&&label` pointers in `.data.rel.ro` is misdetected by `llvm-bolt
+-instrument` as a jump table; its rewritten entries land 1–3 bytes off the real
+handler entry points, so backends SIGSEGV on the first query (crash IP equals a
+rewritten entry). There is no compiler/linker flag to turn off labels-as-values,
+so the configure cache variable is the supported way out. Set `PG_COMPUTED_GOTO=1`
+to re-enable it (e.g. to test a BOLT fix). The switch-based interpreter is
+slightly slower, but equally so for baseline/bolt/bolt-rewrite, so within-run
+deltas remain valid.
+
 Each mode installs to `$STATE/installs/<mode>` and snapshots
 `$BINARIES/<mode>/postgres`; `build-info.txt` records flags, ELF type,
 relocation count, size, sha256 and `--version`.
@@ -116,9 +128,11 @@ Set `RESET_DATA=1` to wipe and re-initialize the dataset.
   `-instrumentation-no-counters-clear`): each dump is cumulative, so the last
   dump always holds the complete profile. The workload must run longer than the
   dump interval; `profile.sh` enforces this.
-- **PostgreSQL's computed-goto expression interpreter** may stress BOLT's
-  indirect-branch analysis (AArch64 in particular); capture any `llvm-bolt`
-  failure as a finding.
+- **PostgreSQL's computed-goto expression interpreter is disabled** at build
+  time (`pgac_cv_computed_goto=no`, see Build recipe) because `llvm-bolt
+  -instrument` corrupts its `&&label` dispatch table. Re-enable with
+  `PG_COMPUTED_GOTO=1` once BOLT handles it (tracked as a BOLT bug, not a
+  harness issue).
 - **`-rewrite` is experimental**; check the build-id of
   `postgres.bolt-rewrite` — `-rewrite` currently leaves the baseline build-id
   in place (see the BOLT `-rewrite` build-id notes).

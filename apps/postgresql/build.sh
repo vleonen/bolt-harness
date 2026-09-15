@@ -75,6 +75,22 @@ build_mode() { # <mode>
   [ -d "$src" ] || die "PostgreSQL source not found at $src (set APP_SRC or clone it)"
   [ -x "$src/configure" ] || die "$src/configure not found (is $src a PostgreSQL source tree?)"
 
+  # PostgreSQL 17's ExecInterpExpr uses GCC computed goto (labels-as-values) for
+  # direct-threaded dispatch: a static dispatch_table of 99 &&label pointers in
+  # .data.rel.ro (R_X86_64_RELATIVE relocs), copied into each ExprEvalStep.opcode
+  # and jumped to via `goto *(op->opcode)`. llvm-bolt -instrument misdetects that
+  # table as a jump table and rewrites its entries, landing 76/99 of them 1-3
+  # bytes off the real handler entry points; the first query dispatching through
+  # an affected opcode jumps mid-instruction and SIGSEGVs the backend. Disable
+  # the computed goto so the interpreter compiles to a plain switch, which BOLT
+  # instruments correctly. Set PG_COMPUTED_GOTO=1 to re-enable for experiments.
+  if [ "${PG_COMPUTED_GOTO:-0}" != 1 ]; then
+    export pgac_cv_computed_goto=no
+    info "  computed goto: disabled (switch-based interpreter)"
+  else
+    unset pgac_cv_computed_goto
+  fi
+
   info "Configuring PostgreSQL [$mode]: CC=$CC"
   info "  CFLAGS:        $cflags"
   info "  LDFLAGS_EX:    $ldflags"
@@ -89,6 +105,11 @@ build_mode() { # <mode>
         ${POSTGRES_CONFIGURE_OPTS:-} ) \
     > "$STATE/configure-$mode.log" 2>&1 \
     || { tail -30 "$STATE/configure-$mode.log" >&2; die "configure failed for [$mode]"; }
+
+  if [ "${PG_COMPUTED_GOTO:-0}" != 1 ] \
+      && grep -q '^#define HAVE_COMPUTED_GOTO' "$build/src/include/pg_config.h"; then
+    die "HAVE_COMPUTED_GOTO still defined for [$mode]; computed goto was not disabled"
+  fi
 
   info "Building PostgreSQL [$mode] (-j$BUILD_JOBS)"
   make -C "$build" -j "$BUILD_JOBS" \
@@ -119,6 +140,7 @@ build_mode() { # <mode>
     echo "relocs:     $(readelf -rW "$bin/postgres" | grep -c "$reloc_prefix" || true) entries"
     echo "rela.text:  $(readelf -SW "$bin/postgres" | grep -c '\.rela\.text' || true) section(s)"
     echo "size:       $(du -h "$bin/postgres" | cut -f1)"
+    echo "size_stripped: $(stripped_size_bytes "$bin/postgres") bytes"
     echo "sha256:     $(sha256sum "$bin/postgres" | cut -d' ' -f1)"
     echo "version:    $("$bin/postgres" --version)"
   } > "$bin/build-info.txt"

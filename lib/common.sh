@@ -200,3 +200,20 @@ abspath() {
     *) echo "$PWD/$p" ;;
   esac
 }
+
+# Print the size in bytes of <path> after removing all non-runtime sections
+# (symbol table, debug info, and the non-allocatable .rela.* sections kept by
+# -Wl,-q). This is the fair basis for comparing BOLT output size against the
+# baseline, whose raw size is inflated by those BOLT-input-only sections.
+# Falls back to the raw file size if stripping is unavailable or fails.
+stripped_size_bytes() { # <path>
+  local f="$1" tmp raw
+  raw="$(stat -c%s "$f" 2>/dev/null || echo 0)"
+  tmp="$(mktemp)"
+  if strip -o "$tmp" "$f" >/dev/null 2>&1; then
+    stat -c%s "$tmp"
+  else
+    echo "$raw"
+  fi
+  rm -f "$tmp"
+}

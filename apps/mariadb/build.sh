@@ -134,6 +134,7 @@ build_mode() { # <mode>
     echo "relocs:     $(readelf -rW "$bin/mariadbd" | grep -c "$reloc_prefix" || true) entries"
     echo "rela.text:  $(readelf -SW "$bin/mariadbd" | grep -c '\.rela\.text' || true) section(s)"
     echo "size:       $(du -h "$bin/mariadbd" | cut -f1)"
+    echo "size_stripped: $(stripped_size_bytes "$bin/mariadbd") bytes"
     echo "sha256:     $(sha256sum "$bin/mariadbd" | cut -d' ' -f1)"
     echo "version:    $("$bin/mariadbd" --version)"
   } > "$bin/build-info.txt"
