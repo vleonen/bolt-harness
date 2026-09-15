@@ -1,4 +1,4 @@
-# LLVM 23.1.1 BOLT `-rewrite` — Results on MariaDB & PostgreSQL (aarch64 and x86_64)
+# LLVM 23.1.1 BOLT `-rewrite` — Results on MariaDB, PostgreSQL (aarch64 & x86_64) and MongoDB (x86_64)
 
 Date: 2026-09-15
 Harness: `bolt-harness`
@@ -16,12 +16,15 @@ Tool under test: `llvm-bolt`, LLVM **23.1.1**, branch `llvmorg-23.1.1-rewrite`:
   revision `d1723d9d8a4d` (the same revision as aarch64; both architectures are
   now on one revision). The x86_64 results below also include the fourth
   configuration, `bolt-rewrite-nohuge`.
+- **MongoDB (x86_64 only)**: MongoDB 7.0 (`r7.0.43`, built from source with
+  SCons) was added to the harness and measured on the same x86_64 host with
+  YCSB; no aarch64 MongoDB measurements are included (see §3.4).
 
 ## Summary
 
-The `-rewrite` feature was validated end-to-end on two real server applications
-in both ELF link modes, on **aarch64** and **x86_64**, against the standard
-profile-driven BOLT pipeline.
+The `-rewrite` feature was validated end-to-end on three real server
+applications in both ELF link modes, on **aarch64** and **x86_64** (MongoDB
+only on x86_64), against the standard profile-driven BOLT pipeline.
 
 **aarch64** (2026-09-15, rev `d1723d9d`; four configurations)
 
@@ -40,25 +43,31 @@ profile-driven BOLT pipeline.
 | MariaDB | no-pie | **+20.69 %** | **+21.46 %** | **+21.44 %** | 0 |
 | PostgreSQL | pie | **+7.66 %** | **+1.79 %** | **+2.46 %** | 0 |
 | PostgreSQL | no-pie | **+16.36 %** | **+18.31 %** | **+15.59 %** | 0 |
+| MongoDB | pie | **+24.35 %** | **+20.05 %** | — | 0 |
+| MongoDB | no-pie | **+28.89 %** | **+32.73 %** | — | 0 |
 
-(Throughput geomean vs. the unmodified baseline; higher is better.
+(Throughput geomean vs. the unmodified baseline; higher is better. MongoDB was
+measured 2026-09-15 on the same x86_64 host and BOLT revision with the standard
+three configurations (no `bolt-rewrite-nohuge`, and not on aarch64).
 `bolt-rewrite-nohuge` is the regular `-rewrite` build with BOLT's default 2 M
 huge-page code alignment replaced by the target's regular page size, i.e.
 `-rewrite --no-huge-pages` — see §2.3.)
 
-All twelve optimized `-rewrite` binaries (2 architectures × 2 applications ×
-2 link modes; eight plain `-rewrite` plus four `bolt-rewrite-nohuge`) are
-produced, start, and complete the full benchmark workload with zero errors.
+All fourteen optimized `-rewrite` binaries (2 architectures × 2 applications ×
+2 link modes, plus MongoDB × 2 x86_64 link modes; ten plain `-rewrite` plus four
+`bolt-rewrite-nohuge`) are produced, start, and complete the full benchmark
+workload with zero errors.
 
 Binary size (measured on **stripped** binaries, §4.4): on **x86_64** `bolt`
-grows the runtime image by +23 % … +55 % (it keeps the original code), while
-`-rewrite` is essentially size-neutral (≈ 0 %); because x86_64 `-rewrite` is
+grows the runtime image by +16.5 % … +55 % (it keeps the original code), while
+`-rewrite` is near size-neutral (≤ 2.3 %); because x86_64 `-rewrite` is
 already regular-page aligned, `bolt-rewrite-nohuge` matches `-rewrite`
 (≤ 16 B). On **aarch64** `bolt` grows the runtime image by +60 % … +104 % and
 `-rewrite` by +21 % … +36 %; a substantial part of both is alignment/placement
 padding introduced by BOLT's default 2 M code alignment. Replacing it with the
 regular page size (`bolt-rewrite-nohuge`) removes the aarch64 `-rewrite`
-overhead (down to +15 % … +23 %).
+overhead (down to +15 % … +23 %). MongoDB (x86_64) `bolt` adds +16.5 % (pie) /
++17.2 % (no-pie) and `-rewrite` +2.1 % / +2.3 %.
 
 ---
 
@@ -88,7 +97,8 @@ overhead (down to +15 % … +23 %).
 | Userspace | Ubuntu 24.04 (containers), GCC 13.3.0 |
 | Harness | `bolt-harness` (same as aarch64) |
 | BOLT | `$HOME/src/llvm-project-23/build23/bin/llvm-bolt` (LLVM 23.1.1, rev `d1723d9d8a4d`) |
-| Workload generators | sysbench (MariaDB), pgbench (PostgreSQL) |
+| Workload generators | sysbench (MariaDB), pgbench (PostgreSQL), YCSB (MongoDB) |
+| MongoDB build | Ubuntu 24.04 container, GCC 12.4, deadsnakes Python 3.10, MongoDB 7.0 `r7.0.43` (SCons) |
 
 ---
 
@@ -294,6 +304,42 @@ Workload: **pgbench** — `select-only` + `tpcb-like`, scale 100 (~10 M account
 rows), 16 clients / 4 jobs, prepared protocol, 15 s per script per rep,
 1 warmup + 3 recorded reps.
 
+### 3.4 MongoDB 7.0 (`r7.0.43`, github.com/mongodb/mongo) — x86_64
+
+MongoDB 7.0 is the last release built with **SCons** (8.0 is Bazel-only), which
+exposes `CCFLAGS`/`CXXFLAGS`/`LINKFLAGS` so the BOLT flags can be injected
+natively. It is built in an Ubuntu 24.04 container — the host-built `llvm-bolt`
+needs glibc ≥ 2.36, so the other apps' base is required — with GCC 12 and a
+deadsnakes Python 3.10 venv for MongoDB's pinned SCons requirements. `mongod`
+is the optimized binary (WiredTiger, `--js-engine=none`, `--allocator=system`);
+both link modes share one SCons tree and differ only in `LINKFLAGS`.
+
+```bash
+CCFLAGS/CXXFLAGS='-fno-omit-frame-pointer -fno-stack-protector [-mbranch-protection=none]'
+LINKFLAGS='-Wl,--emit-relocs'          # pie; no-pie adds -no-pie
+python3 buildscripts/scons.py install-mongod \
+  --opt=on --dbg=off --runtime-hardening=off --js-engine=none \
+  --allocator=system --linker=gold --disable-warnings-as-errors
+objcopy --strip-debug mongod           # 8.5 GB raw -> ~220 MB BOLT input
+```
+
+`--js-engine=none` drops the bundled mozjs engine (unused by the workload, and
+its direct-threaded computed-goto interpreter is a BOLT hazard);
+`objcopy --strip-debug` removes full DWARF while keeping the symbol table,
+`.eh_frame` and the `--emit-relocs` `.rela.*` sections.
+
+Baseline binary characteristics:
+
+| Arch | Mode | ELF | relocations | `mongod` raw | stripped |
+|---|---|---|---|---|---|
+| x86_64 | pie | `ELF 64-bit LSB pie executable` | 2,431,098 | 221 MB | 129,725,304 B |
+| x86_64 | no-pie | `ELF 64-bit LSB executable` | 2,258,954 | 217 MB | 125,596,536 B |
+
+Workload: **YCSB** (`mongodb` binding, `mongodb-driver-sync`) — `workloada`
+(50/50 read/update) + `workloadc` (read-only), 2,000,000 records × 10 fields,
+16 threads, 15 s per workload, 1 warmup + 3 recorded reps, WiredTiger cache
+4 GB.
+
 ---
 
 ## 4. Results
@@ -312,6 +358,8 @@ Geomean of per-workload ratios (baseline = 1.0000); higher is better.
 | x86_64 | MariaDB | no-pie | **+20.69 %** | **+21.46 %** | **+21.44 %** |
 | x86_64 | PostgreSQL | pie | **+7.66 %** | **+1.79 %** | **+2.46 %** |
 | x86_64 | PostgreSQL | no-pie | **+16.36 %** | **+18.31 %** | **+15.59 %** |
+| x86_64 | MongoDB | pie | **+24.35 %** | **+20.05 %** | — |
+| x86_64 | MongoDB | no-pie | **+28.89 %** | **+32.73 %** | — |
 
 On aarch64 `-rewrite` trails the in-place `bolt` variant by roughly 0.5–3
 points (except MariaDB no-pie), as expected for a full re-emission vs. in-place
@@ -385,6 +433,20 @@ stable.
 | select-only | TPS | 186,550.06 | 222,622.19 | 215,895.88 | 209,699.53 |
 | tpcb-like | TPS | 27,481.13 | 31,182.00 | 33,239.82 | 32,664.51 |
 
+**x86_64 — MongoDB — pie**
+
+| workload | metric | baseline | bolt | bolt-rewrite |
+|---|---|---|---|---|
+| workloada | TPS | 36,509.89 | 45,886.50 | 43,349.49 |
+| workloadc | TPS | 50,158.29 | 61,708.09 | 60,885.32 |
+
+**x86_64 — MongoDB — no-pie**
+
+| workload | metric | baseline | bolt | bolt-rewrite |
+|---|---|---|---|---|
+| workloada | TPS | 32,247.78 | 41,753.12 | 44,134.14 |
+| workloadc | TPS | 52,042.13 | 66,775.41 | 66,987.86 |
+
 ### 4.3 Latency (geomean vs. baseline, lower is better)
 
 | Arch | App | Mode | `bolt` | `bolt-rewrite` | `bolt-rewrite-nohuge` |
@@ -397,6 +459,8 @@ stable.
 | x86_64 | MariaDB | no-pie | −15.70 % | −17.47 % | −17.82 % |
 | x86_64 | PostgreSQL | pie | −7.11 % | −2.09 % | −2.71 % |
 | x86_64 | PostgreSQL | no-pie | −14.15 % | −15.34 % | −13.32 % |
+| x86_64 | MongoDB | pie | −19.64 % | −15.44 % | — |
+| x86_64 | MongoDB | no-pie | −22.50 % | −23.94 % | — |
 
 Per-workload average latency (ms):
 
@@ -418,6 +482,10 @@ Per-workload average latency (ms):
 | x86_64 | PostgreSQL | pie | tpcb-like | 0.49 | 0.45 | 0.47 | 0.48 |
 | x86_64 | PostgreSQL | no-pie | select-only | 0.09 | 0.07 | 0.07 | 0.08 |
 | x86_64 | PostgreSQL | no-pie | tpcb-like | 0.58 | 0.51 | 0.48 | 0.49 |
+| x86_64 | MongoDB | pie | workloada | 0.43 | 0.34 | 0.36 | — |
+| x86_64 | MongoDB | pie | workloadc | 0.28 | 0.23 | 0.24 | — |
+| x86_64 | MongoDB | no-pie | workloada | 0.48 | 0.37 | 0.35 | — |
+| x86_64 | MongoDB | no-pie | workloadc | 0.30 | 0.24 | 0.23 | — |
 
 ### 4.4 Binary size
 
@@ -435,6 +503,8 @@ so all deltas below use **stripped file size**, for both architectures.
 | MariaDB | no-pie | 22,346,312 | 28,593,264 (**+28.0 %**) | 22,367,000 (**+0.1 %**) | 22,367,016 (**+0.1 %**) |
 | PostgreSQL | pie | 9,651,888 | 14,807,928 (**+53.4 %**) | 9,664,856 (**+0.1 %**) | 9,664,872 (**+0.1 %**) |
 | PostgreSQL | no-pie | 9,367,352 | 14,523,208 (**+55.0 %**) | 9,376,200 (**+0.1 %**) | 9,376,224 (**+0.1 %**) |
+| MongoDB | pie | 129,725,304 | 151,138,896 (**+16.5 %**) | 132,479,728 (**+2.1 %**) | — |
+| MongoDB | no-pie | 125,596,536 | 147,191,320 (**+17.2 %**) | 128,482,616 (**+2.3 %**) | — |
 
 **aarch64 (stripped file size; rev `d1723d9d`)**
 
@@ -500,13 +570,19 @@ the stripped file.
 | PostgreSQL | no-pie | bolt | 2 M | 2 M | 7.4 KB | 2.86 MB | 20.18 % |
 | PostgreSQL | no-pie | bolt-rewrite | 4 K | 4 K | 6.2 KB | 12 KB | 0.13 % |
 | PostgreSQL | no-pie | bolt-rewrite-nohuge | 4 K | 4 K | 6.2 KB | 12 KB | 0.13 % |
+| MongoDB | pie | baseline | 64 | 4 K | 1.0 KB | 1.2 KB | 0.00 % |
+| MongoDB | pie | bolt | 2 M | 2 M | 1.0 KB | 2.00 MB | 1.39 % |
+| MongoDB | pie | bolt-rewrite | 4 K | 2 M | 1.83 MB | 1.83 MB | 1.45 % |
+| MongoDB | no-pie | baseline | 64 | 4 K | 2.9 KB | 3.0 KB | 0.00 % |
+| MongoDB | no-pie | bolt | 2 M | 2 M | 2.9 KB | 2.00 MB | 1.43 % |
+| MongoDB | no-pie | bolt-rewrite | 4 K | 2 M | 1.76 MB | 1.76 MB | 1.44 % |
 
 Observations:
 
-* Without BOLT the binaries are essentially gap-free (x86_64 0.02 % … 0.08 %,
+* Without BOLT the binaries are essentially gap-free (x86_64 0.00 % … 0.08 %,
   aarch64 0.24 % … 0.71 %).
 * `bolt` (no-rewrite) aligns its added hot-text segment to 2 M; on x86_64 that
-  adds ≈2.0–2.9 MB of in-segment padding (6 % … 20 % of the file) and on
+  adds ≈2.0–2.9 MB of in-segment padding (1.4 % … 20 % of the file) and on
   aarch64 ≈2.1 MB (5 % … 11 %). Together with keeping the original code as
   `.bolt.org.text`, this is why `bolt` looks so much larger than its emitted
   code.
@@ -518,7 +594,10 @@ Observations:
   **x86_64** the default `-rewrite` is already regular-page (4 K) aligned
   (`.text` and all `PT_LOAD` segments 4 K, no segment hole), so `--no-huge-pages`
   is a no-op there — the two x86_64 rewrite binaries differ by 16 B. BOLT's 2 M
-  alignment on x86_64 therefore shows up only in the `bolt` variant.
+  alignment on x86_64 therefore shows up only in the `bolt` variant. The one
+  exception is MongoDB on x86_64, whose `-rewrite` keeps a 2 M `PT_LOAD`
+  alignment (`.text` 4 K, `LOAD` 2 M, ≈1.8 MB segment hole, 1.4 % gaps); that
+  is a property of the input, and its `bolt-rewrite-nohuge` was not collected.
 * `bolt-rewrite-nohuge` cuts the aarch64 `-rewrite` size increase from
   +21 % … +36 % to **+15 % … +23 %** (1.4 … 1.8 MB per binary) with performance
   within run-to-run noise of `bolt-rewrite` (§4.1); on x86_64 it changes neither
@@ -526,8 +605,8 @@ Observations:
 * The 2 M alignment is BOLT's default; the harness does not request
   `--hugify`/`--hot-text`, so the huge pages are never actually used.
 * `bolt`, `bolt-rewrite` and `bolt-rewrite-nohuge` all patch the ELF build-id
-  (last bit flipped) — verified on all sixteen optimized binaries
-  (aarch64 + x86_64).
+  (last bit flipped) — verified on every optimized binary
+  (aarch64 + x86_64 + MongoDB x86_64).
 
 ### 4.5 Functional validation
 
@@ -562,6 +641,14 @@ end-to-end properties: all twelve optimized outputs (`bolt`, `bolt-rewrite`,
 full workload completed with 0 errors (sysbench `ignored errors = 0` /
 `reconnects = 0`; pgbench `failed transactions = 0`; no server
 `SIGSEGV`/`FATAL`/`PANIC`); build-id patched for all variants.
+
+MongoDB (x86_64, standard three-variant pipeline) was validated the same way:
+`bolt` and `bolt-rewrite` exist for both `pie` and `no-pie`, `--version` exits
+0, and the full YCSB workload (2 M records, `workloada`+`workloadc`, 1 warmup +
+3 reps) completed with **0 errors** (`FAILED`/`NOT_FOUND` = 0; no server
+`SIGSEGV`/`FATAL`/`PANIC`). The optimize logs contain no `BOLT-ERROR` and no
+`corrupted control flow`; warning counts are 1 (`bolt`) and 51 (`bolt-rewrite`)
+for each mode. Build-id is patched for all four MongoDB optimized binaries.
 
 ---
 
@@ -611,6 +698,17 @@ full workload completed with 0 errors (sysbench `ignored errors = 0` /
    identically on x86_64. Adding the longer variant name also exposed a
    PostgreSQL-only 107-byte Unix-socket path limit; `apps/postgresql/app.sh` now
    uses a short fixed socket subdirectory.
+10. **MongoDB (x86_64).** MongoDB 7.0 is built with SCons and needs a
+    non-default toolchain: Ubuntu 24.04 (host glibc ≥ 2.36 for the mounted BOLT)
+    with GCC 12 and deadsnakes Python 3.10, because Noble's GCC 13 / Python 3.12
+    do not satisfy its pinned SCons requirements. mozjs is disabled
+    (`--js-engine=none`). `mongod` is large (~148 k functions, ~2.4 M
+    relocations) and `llvm-bolt -instrument` peaks above a 16 GB machine's RAM,
+    so the adapter appends `--no-threads`; the baseline is also stripped of
+    DWARF (`objcopy --strip-debug`, 8.5 GB → ~220 MB). Both link modes share one
+    SCons tree (only `LINKFLAGS` differ), so the second mode is a ~5 min relink.
+    YCSB's `operationcount` is set effectively unlimited so `maxexecutiontime`
+    bounds each run.
 
 ---
 
@@ -646,6 +744,16 @@ performs: profile (instrument + workload + `merge-fdata`) → optimize
 (`bolt` + `bolt-rewrite`, plus `bolt-rewrite-nohuge` when `NOHUGE=1`) → bench
 (every variant in `VALID_WHICH`) → compare.
 
+MongoDB (x86_64 only) uses its own container; the adapter appends
+`--no-threads` automatically and both modes share one SCons tree:
+
+```bash
+cd $HOME/src/bolt-harness/apps/mongodb
+LLVM_SRC=$HOME/src/llvm-project-23 ./rebuild.sh          # image + clone + venv + YCSB
+LLVM_SRC=$HOME/src/llvm-project-23 ./rebuild.sh exec \
+  /harness/pipeline/run-all.sh pie no-pie
+```
+
 ### 2026-09-15 aarch64 re-validation + `nohuge` (no re-profiling)
 
 The aarch64 numbers in this report were refreshed with rev `d1723d9d` by
@@ -668,6 +776,7 @@ done
 APP=mariadb NOHUGE=1 pipeline/size-report.sh pie no-pie
 APP=postgresql NOHUGE=1 HARNESS_WORK="$PWD/work/postgresql" \
   pipeline/size-report.sh pie no-pie
+APP=mongodb pipeline/size-report.sh pie no-pie
 ```
 
 The pre-re-validation (rev `502a8fc`) optimized binaries and logs are kept under
@@ -690,3 +799,9 @@ The pre-re-validation (rev `502a8fc`) optimized binaries and logs are kept under
 * Benchmark results: `bolt-harness/work[/postgresql]/_state/<app>/results/<mode>/<variant>/<timestamp>/summary.tsv`
 * Binaries and build info: `…/_state/<app>/binaries/<mode>/{baseline,*.bolt,*.bolt-rewrite,*.bolt-rewrite-nohuge,build-info.txt}`
 * BOLT logs: `…/_state/<app>/binaries/<mode>/bolt-{bolt,bolt-rewrite,bolt-rewrite-nohuge}.log`
+* MongoDB (x86_64): run log `bolt-harness/work/mongodb-x86_64-standard.out`;
+  consolidated metrics/sizes/checks `bolt-harness/work/mongodb-x86_64-data.txt`;
+  results under `…/_state/mongodb/results/<mode>/<variant>/<timestamp>/summary.tsv`;
+  binaries/build info `…/_state/mongodb/binaries/<mode>/`; merged profiles
+  `…/_state/mongodb/profiles/<mode>/profile.merged.fdata`; BOLT logs
+  `…/_state/mongodb/binaries/<mode>/bolt-{bolt,bolt-rewrite}.log`.

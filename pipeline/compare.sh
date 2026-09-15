@@ -89,7 +89,7 @@ print_metric() { # <metric> <high|low>
 # Which direction is an improvement for a known metric (default: higher).
 metric_better() {
   case "$1" in
-    lat_avg_ms|latency_avg_ms|avg_latency_ms|lat_p95_ms) echo low ;;
+    lat_avg_ms|latency_avg_ms|avg_latency_ms|lat_p95_ms|*_lat_ms) echo low ;;
     *) echo high ;;
   esac
 }

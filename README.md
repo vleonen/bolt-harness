@@ -42,6 +42,7 @@ bolt-harness/
 |---|---|---|---|
 | MariaDB 11.4 LTS | `apps/mariadb/` | `mariadbd` | sysbench OLTP (`oltp_point_select`, `oltp_read_write`) |
 | PostgreSQL 17 | `apps/postgresql/` | `postgres` | pgbench (`select-only`, `tpcb-like`) |
+| MongoDB 7.0 | `apps/mongodb/` | `mongod` | YCSB (`workloada`, `workloadc`) |
 
 ## Quick start (MariaDB)
 
@@ -62,6 +63,26 @@ cd apps/postgresql
 ```
 
 See `apps/postgresql/README.md` for details and tuning knobs.
+
+## Quick start (MongoDB)
+
+```bash
+cd apps/mongodb
+./rebuild.sh                 # build image, start container, clone MongoDB + YCSB
+./rebuild.sh exec /harness/pipeline/run-all.sh pie no-pie
+```
+
+MongoDB 7.0 is the last **SCons** release (whose `CCFLAGS`/`LINKFLAGS`
+variables accept BOLT's flags directly); 8.0 is Bazel-only and unsupported.
+The container is Ubuntu 24.04 (required so the host-built `llvm-bolt` runs
+inside it) with Python 3.10 from deadsnakes and GCC 12, matching MongoDB 7.0's
+SCons requirements. The build disables the mozjs JavaScript engine
+(`--js-engine=none`), whose computed-goto interpreter is a BOLT hazard, and
+strips DWARF from the baseline so the BOLT input is ~220 MB instead of ~8.5 GB.
+See `apps/mongodb/README.md` for details and tuning knobs. MongoDB builds are
+much longer than the other apps (~2 h for the first mode); both modes share one
+SCons tree, so the second is just a relink. Run builds detached and watch the
+per-mode log.
 
 ## Pipeline
 
