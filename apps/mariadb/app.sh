@@ -111,13 +111,13 @@ app_prepare_data() { # <mode>
   datadir="$(app_data_dir "$mode")"
   marker="$datadir/.bolt-harness-prepared"
 
-  if [ -f "$marker" ]; then
-    info "data already prepared: $datadir"
-    return 0
-  fi
   if [ "${RESET_DATA:-0}" = 1 ] && [ -d "$datadir" ]; then
     info "RESET_DATA=1: wiping $datadir"
     rm -rf "$datadir"
+  fi
+  if [ -f "$marker" ]; then
+    info "data already prepared: $datadir"
+    return 0
   fi
 
   base="$(app_basedir "$mode")"
