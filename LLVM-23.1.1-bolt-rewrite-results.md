@@ -13,9 +13,9 @@ Tool under test: `llvm-bolt`, LLVM **23.1.1**, branch `llvmorg-23.1.1-rewrite`:
   `bolt-rewrite-nohuge` (`-rewrite --no-huge-pages`), added to quantify BOLT's
   default 2 M huge-page code alignment (see §2.3 and §4.4).
 - **x86_64**: `$HOME/src/llvm-project-23/build23/bin/llvm-bolt`, same branch,
-  revision `d1723d9d8a4d` (the same revision as aarch64; the x86_64 results in
-  this report were produced with it, so both architectures are now on one
-  revision). The x86_64 run predates the `bolt-rewrite-nohuge` configuration.
+  revision `d1723d9d8a4d` (the same revision as aarch64; both architectures are
+  now on one revision). The x86_64 results below also include the fourth
+  configuration, `bolt-rewrite-nohuge`.
 
 ## Summary
 
@@ -32,32 +32,33 @@ profile-driven BOLT pipeline.
 | PostgreSQL | pie | **+35.27 %** | **+35.63 %** | **+38.21 %** | 0 |
 | PostgreSQL | no-pie | **+35.23 %** | **+35.42 %** | **+36.78 %** | 0 |
 
-**x86_64** (three configurations; `bolt-rewrite-nohuge` pending the x86_64 re-run)
+**x86_64** (2026-09-15, rev `d1723d9d`; four configurations)
 
-| App | Mode | `bolt` (no-rewrite) | `bolt-rewrite` | rewrite binary runs | workload errors |
+| App | Mode | `bolt` | `bolt-rewrite` | `bolt-rewrite-nohuge` | workload errors |
 |---|---|---|---|---|---|
-| MariaDB | pie | **+20.36 %** | **+21.90 %** | yes | 0 |
-| MariaDB | no-pie | **+21.27 %** | **+19.09 %** | yes | 0 |
-| PostgreSQL | pie | **+9.21 %** | **+3.97 %** | yes | 0 |
-| PostgreSQL | no-pie | **+14.37 %** | **+12.22 %** | yes | 0 |
+| MariaDB | pie | **+10.27 %** | **+16.39 %** | **+22.40 %** | 0 |
+| MariaDB | no-pie | **+20.69 %** | **+21.46 %** | **+21.44 %** | 0 |
+| PostgreSQL | pie | **+7.66 %** | **+1.79 %** | **+2.46 %** | 0 |
+| PostgreSQL | no-pie | **+16.36 %** | **+18.31 %** | **+15.59 %** | 0 |
 
 (Throughput geomean vs. the unmodified baseline; higher is better.
 `bolt-rewrite-nohuge` is the regular `-rewrite` build with BOLT's default 2 M
 huge-page code alignment replaced by the target's regular page size, i.e.
 `-rewrite --no-huge-pages` — see §2.3.)
 
-All eight `*.bolt-rewrite` binaries (2 architectures × 2 applications × 2 link
-modes), plus the four aarch64 `bolt-rewrite-nohuge` binaries, are produced,
-start, and complete the full benchmark workload with zero errors.
+All twelve optimized `-rewrite` binaries (2 architectures × 2 applications ×
+2 link modes; eight plain `-rewrite` plus four `bolt-rewrite-nohuge`) are
+produced, start, and complete the full benchmark workload with zero errors.
 
 Binary size (measured on **stripped** binaries, §4.4): on **x86_64** `bolt`
 grows the runtime image by +23 % … +55 % (it keeps the original code), while
-`-rewrite` is essentially size-neutral (≈ 0 %). On **aarch64** `bolt` grows the
-runtime image by +60 % … +104 % and `-rewrite` by +21 % … +36 %; a substantial
-part of both is alignment/placement padding introduced by BOLT's default 2 M
-code alignment. Replacing it with the regular page size
-(`bolt-rewrite-nohuge`) removes the 2 M `PT_LOAD` alignment and cuts the
-aarch64 `-rewrite` overhead to +15 % … +23 %.
+`-rewrite` is essentially size-neutral (≈ 0 %); because x86_64 `-rewrite` is
+already regular-page aligned, `bolt-rewrite-nohuge` matches `-rewrite`
+(≤ 16 B). On **aarch64** `bolt` grows the runtime image by +60 % … +104 % and
+`-rewrite` by +21 % … +36 %; a substantial part of both is alignment/placement
+padding introduced by BOLT's default 2 M code alignment. Replacing it with the
+regular page size (`bolt-rewrite-nohuge`) removes the aarch64 `-rewrite`
+overhead (down to +15 % … +23 %).
 
 ---
 
@@ -188,7 +189,8 @@ configuration (`NOHUGE=1`), produced and benchmarked exactly like the others:
 The flag and the harness scripts are architecture-neutral (the same
 `NOHUGE=1` invocation on x86_64 switches to 4 K pages); it is off by default, so
 the standard three-variant pipeline is unchanged. §4.4 reports the resulting
-size and alignment figures.
+size and alignment figures. (On x86_64 the default `-rewrite` is already
+regular-page aligned, so the flag changes nothing there; see §4.4.1.)
 
 ---
 
@@ -306,20 +308,20 @@ Geomean of per-workload ratios (baseline = 1.0000); higher is better.
 | aarch64 | MariaDB | no-pie | **+47.62 %** | **+46.90 %** | **+50.61 %** |
 | aarch64 | PostgreSQL | pie | **+35.27 %** | **+35.63 %** | **+38.21 %** |
 | aarch64 | PostgreSQL | no-pie | **+35.23 %** | **+35.42 %** | **+36.78 %** |
-| x86_64 | MariaDB | pie | **+20.36 %** | **+21.90 %** | — |
-| x86_64 | MariaDB | no-pie | **+21.27 %** | **+19.09 %** | — |
-| x86_64 | PostgreSQL | pie | **+9.21 %** | **+3.97 %** | — |
-| x86_64 | PostgreSQL | no-pie | **+14.37 %** | **+12.22 %** | — |
+| x86_64 | MariaDB | pie | **+10.27 %** | **+16.39 %** | **+22.40 %** |
+| x86_64 | MariaDB | no-pie | **+20.69 %** | **+21.46 %** | **+21.44 %** |
+| x86_64 | PostgreSQL | pie | **+7.66 %** | **+1.79 %** | **+2.46 %** |
+| x86_64 | PostgreSQL | no-pie | **+16.36 %** | **+18.31 %** | **+15.59 %** |
 
 On aarch64 `-rewrite` trails the in-place `bolt` variant by roughly 0.5–3
 points (except MariaDB no-pie), as expected for a full re-emission vs. in-place
-patching; on x86_64 the two are closer (and `-rewrite` leads slightly on MariaDB
-pie). `bolt-rewrite-nohuge` performs within run-to-run noise of `bolt-rewrite`
-on aarch64 (−1.0 … +3.7 points; it is a *size* change, not a reordering change).
-The aarch64 deltas were re-measured at rev `d1723d9d` in one four-variant
-session; absolute levels vary between runs (see §5.5), but the ordering and
-magnitude are stable. The x86_64 `bolt-rewrite-nohuge` column is pending the
-x86_64 re-run.
+patching; on x86_64 the variants are closer and the ordering is within
+run-to-run noise. `bolt-rewrite-nohuge` performs within run-to-run noise of
+`bolt-rewrite` on both architectures (aarch64 −1.0 … +3.7 points, x86_64
+−2.7 … +6.0 points; it is a *size* change, not a reordering change). All deltas
+were measured at rev `d1723d9d` in one four-variant session per app/mode;
+absolute levels vary between runs (see §5.5), but the ordering and magnitude are
+stable.
 
 ### 4.2 Per-workload throughput means
 
@@ -355,33 +357,33 @@ x86_64 re-run.
 
 **x86_64 — MariaDB — pie**
 
-| workload | metric | baseline | bolt | bolt-rewrite |
-|---|---|---|---|---|
-| oltp_point_select | TPS/QPS | 140,054.91 | 169,322.39 | 172,460.69 |
-| oltp_read_write | TPS | 4,666.09 | 5,591.01 | 5,630.59 |
-| oltp_read_write | QPS | 93,321.72 | 111,820.12 | 112,611.76 |
+| workload | metric | baseline | bolt | bolt-rewrite | bolt-rewrite-nohuge |
+|---|---|---|---|---|---|
+| oltp_point_select | TPS/QPS | 144,642.86 | 159,815.47 | 164,728.80 | 173,592.94 |
+| oltp_read_write | TPS | 4,730.85 | 5,206.25 | 5,626.88 | 5,905.65 |
+| oltp_read_write | QPS | 94,616.88 | 104,125.05 | 112,537.66 | 118,113.12 |
 
 **x86_64 — MariaDB — no-pie**
 
-| workload | metric | baseline | bolt | bolt-rewrite |
-|---|---|---|---|---|
-| oltp_point_select | TPS/QPS | 140,307.91 | 172,359.86 | 168,170.87 |
-| oltp_read_write | TPS | 4,677.18 | 5,599.33 | 5,534.45 |
-| oltp_read_write | QPS | 93,543.68 | 111,986.74 | 110,688.98 |
+| workload | metric | baseline | bolt | bolt-rewrite | bolt-rewrite-nohuge |
+|---|---|---|---|---|---|
+| oltp_point_select | TPS/QPS | 142,912.38 | 168,070.83 | 175,419.27 | 173,751.39 |
+| oltp_read_write | TPS | 4,808.81 | 5,955.72 | 5,779.43 | 5,832.80 |
+| oltp_read_write | QPS | 96,176.20 | 119,114.36 | 115,588.48 | 116,656.08 |
 
 **x86_64 — PostgreSQL — pie**
 
-| workload | metric | baseline | bolt | bolt-rewrite |
-|---|---|---|---|---|
-| select-only | TPS | 204,839.75 | 224,914.46 | 209,851.63 |
-| tpcb-like | TPS | 31,594.91 | 34,317.09 | 33,336.51 |
+| workload | metric | baseline | bolt | bolt-rewrite | bolt-rewrite-nohuge |
+|---|---|---|---|---|---|
+| select-only | TPS | 216,330.52 | 229,745.54 | 215,829.99 | 224,034.51 |
+| tpcb-like | TPS | 32,582.77 | 35,561.69 | 33,834.67 | 33,026.34 |
 
 **x86_64 — PostgreSQL — no-pie**
 
-| workload | metric | baseline | bolt | bolt-rewrite |
-|---|---|---|---|---|
-| select-only | TPS | 183,646.87 | 210,539.50 | 204,894.68 |
-| tpcb-like | TPS | 27,997.88 | 31,943.16 | 31,601.17 |
+| workload | metric | baseline | bolt | bolt-rewrite | bolt-rewrite-nohuge |
+|---|---|---|---|---|---|
+| select-only | TPS | 186,550.06 | 222,622.19 | 215,895.88 | 209,699.53 |
+| tpcb-like | TPS | 27,481.13 | 31,182.00 | 33,239.82 | 32,664.51 |
 
 ### 4.3 Latency (geomean vs. baseline, lower is better)
 
@@ -391,10 +393,10 @@ x86_64 re-run.
 | aarch64 | MariaDB | no-pie | −32.36 % | −32.01 % | −33.78 % |
 | aarch64 | PostgreSQL | pie | −26.08 % | −26.25 % | −27.66 % |
 | aarch64 | PostgreSQL | no-pie | −26.03 % | −26.15 % | −26.91 % |
-| x86_64 | MariaDB | pie | −17.10 % | −18.86 % | — |
-| x86_64 | MariaDB | no-pie | −17.38 % | −15.34 % | — |
-| x86_64 | PostgreSQL | pie | −8.40 % | −3.67 % | — |
-| x86_64 | PostgreSQL | no-pie | −12.63 % | −10.98 % | — |
+| x86_64 | MariaDB | pie | −9.04 % | −14.01 % | −19.02 % |
+| x86_64 | MariaDB | no-pie | −15.70 % | −17.47 % | −17.82 % |
+| x86_64 | PostgreSQL | pie | −7.11 % | −2.09 % | −2.71 % |
+| x86_64 | PostgreSQL | no-pie | −14.15 % | −15.34 % | −13.32 % |
 
 Per-workload average latency (ms):
 
@@ -408,14 +410,14 @@ Per-workload average latency (ms):
 | aarch64 | PostgreSQL | pie | tpcb-like | 3.02 | 2.28 | 2.26 | 2.24 |
 | aarch64 | PostgreSQL | no-pie | select-only | 0.52 | 0.38 | 0.38 | 0.37 |
 | aarch64 | PostgreSQL | no-pie | tpcb-like | 3.05 | 2.31 | 2.30 | 2.29 |
-| x86_64 | MariaDB | pie | oltp_point_select | 0.11 | 0.09 | 0.09 |
-| x86_64 | MariaDB | pie | oltp_read_write | 3.43 | 2.86 | 2.84 |
-| x86_64 | MariaDB | no-pie | oltp_point_select | 0.11 | 0.09 | 0.09 |
-| x86_64 | MariaDB | no-pie | oltp_read_write | 3.42 | 2.85 | 2.89 |
-| x86_64 | PostgreSQL | pie | select-only | 0.08 | 0.07 | 0.08 |
-| x86_64 | PostgreSQL | pie | tpcb-like | 0.51 | 0.47 | 0.48 |
-| x86_64 | PostgreSQL | no-pie | select-only | 0.09 | 0.08 | 0.08 |
-| x86_64 | PostgreSQL | no-pie | tpcb-like | 0.57 | 0.50 | 0.51 |
+| x86_64 | MariaDB | pie | oltp_point_select | 0.11 | 0.10 | 0.10 | 0.09 |
+| x86_64 | MariaDB | pie | oltp_read_write | 3.38 | 3.07 | 2.84 | 2.71 |
+| x86_64 | MariaDB | no-pie | oltp_point_select | 0.11 | 0.10 | 0.09 | 0.09 |
+| x86_64 | MariaDB | no-pie | oltp_read_write | 3.32 | 2.69 | 2.77 | 2.74 |
+| x86_64 | PostgreSQL | pie | select-only | 0.07 | 0.07 | 0.07 | 0.07 |
+| x86_64 | PostgreSQL | pie | tpcb-like | 0.49 | 0.45 | 0.47 | 0.48 |
+| x86_64 | PostgreSQL | no-pie | select-only | 0.09 | 0.07 | 0.07 | 0.08 |
+| x86_64 | PostgreSQL | no-pie | tpcb-like | 0.58 | 0.51 | 0.48 | 0.49 |
 
 ### 4.4 Binary size
 
@@ -427,12 +429,12 @@ so all deltas below use **stripped file size**, for both architectures.
 
 **x86_64 (stripped file size)**
 
-| App | Mode | baseline (bytes) | `bolt` (Δ) | `bolt-rewrite` (Δ) |
-|---|---|---|---|---|
-| MariaDB | pie | 26,921,472 | 33,155,760 (**+23.2 %**) | 26,921,152 (**−0.0 %**) |
-| MariaDB | no-pie | 22,346,312 | 28,593,264 (**+28.0 %**) | 22,367,000 (**+0.1 %**) |
-| PostgreSQL | pie | 9,651,888 | 14,807,928 (**+53.4 %**) | 9,664,856 (**+0.1 %**) |
-| PostgreSQL | no-pie | 9,367,352 | 14,523,208 (**+55.0 %**) | 9,376,200 (**+0.1 %**) |
+| App | Mode | baseline (bytes) | `bolt` (Δ) | `bolt-rewrite` (Δ) | `bolt-rewrite-nohuge` (Δ) |
+|---|---|---|---|---|---|
+| MariaDB | pie | 26,921,472 | 33,155,760 (**+23.2 %**) | 26,921,152 (**−0.0 %**) | 26,921,176 (**−0.0 %**) |
+| MariaDB | no-pie | 22,346,312 | 28,593,264 (**+28.0 %**) | 22,367,000 (**+0.1 %**) | 22,367,016 (**+0.1 %**) |
+| PostgreSQL | pie | 9,651,888 | 14,807,928 (**+53.4 %**) | 9,664,856 (**+0.1 %**) | 9,664,872 (**+0.1 %**) |
+| PostgreSQL | no-pie | 9,367,352 | 14,523,208 (**+55.0 %**) | 9,376,200 (**+0.1 %**) | 9,376,224 (**+0.1 %**) |
 
 **aarch64 (stripped file size; rev `d1723d9d`)**
 
@@ -457,6 +459,8 @@ between consecutive `PT_LOAD` segments (`seghole`), and the total file slack
 (stripped size − section bytes − ELF/header bytes, `gaps`). Percentages are of
 the stripped file.
 
+**aarch64**
+
 | App | Mode | variant | `.text` | LOAD | seghole | gaps | gaps % |
 |---|---|---|---|---|---|---|---|
 | MariaDB | pie | baseline | 64 | 64 K | 31 KB | 62 KB | 0.24 % |
@@ -476,28 +480,54 @@ the stripped file.
 | PostgreSQL | no-pie | bolt-rewrite | 64 K | 2 M | 1.24 MB | 1.89 MB | 14.97 % |
 | PostgreSQL | no-pie | bolt-rewrite-nohuge | 64 K | 64 K | 61 KB | 0.71 MB | 6.20 % |
 
+**x86_64**
+
+| App | Mode | variant | `.text` | LOAD | seghole | gaps | gaps % |
+|---|---|---|---|---|---|---|---|
+| MariaDB | pie | baseline | 16 | 4 K | 3.8 KB | 4.9 KB | 0.02 % |
+| MariaDB | pie | bolt | 2 M | 2 M | 3.8 KB | 2.05 MB | 6.34 % |
+| MariaDB | pie | bolt-rewrite | 4 K | 4 K | 4.3 KB | 10 KB | 0.04 % |
+| MariaDB | pie | bolt-rewrite-nohuge | 4 K | 4 K | 4.3 KB | 10 KB | 0.04 % |
+| MariaDB | no-pie | baseline | 16 | 4 K | 5.5 KB | 6.2 KB | 0.03 % |
+| MariaDB | no-pie | bolt | 2 M | 2 M | 5.5 KB | 2.06 MB | 7.36 % |
+| MariaDB | no-pie | bolt-rewrite | 4 K | 4 K | 7.8 KB | 14 KB | 0.07 % |
+| MariaDB | no-pie | bolt-rewrite-nohuge | 4 K | 4 K | 7.8 KB | 14 KB | 0.07 % |
+| PostgreSQL | pie | baseline | 16 | 4 K | 3.7 KB | 3.8 KB | 0.04 % |
+| PostgreSQL | pie | bolt | 2 M | 2 M | 3.7 KB | 2.86 MB | 19.76 % |
+| PostgreSQL | pie | bolt-rewrite | 4 K | 4 K | 8.9 KB | 13 KB | 0.14 % |
+| PostgreSQL | pie | bolt-rewrite-nohuge | 4 K | 4 K | 8.9 KB | 13 KB | 0.14 % |
+| PostgreSQL | no-pie | baseline | 16 | 4 K | 7.4 KB | 7.5 KB | 0.08 % |
+| PostgreSQL | no-pie | bolt | 2 M | 2 M | 7.4 KB | 2.86 MB | 20.18 % |
+| PostgreSQL | no-pie | bolt-rewrite | 4 K | 4 K | 6.2 KB | 12 KB | 0.13 % |
+| PostgreSQL | no-pie | bolt-rewrite-nohuge | 4 K | 4 K | 6.2 KB | 12 KB | 0.13 % |
+
 Observations:
 
-* Without BOLT the binaries are essentially gap-free (0.24 % … 0.71 %).
-* `bolt` (no-rewrite) aligns the new `.text` to 2 M; on aarch64 that alone adds
-  ≈2.1 MB of in-segment padding (5 % … 11 % of the file). Together with keeping
-  the original code as `.bolt.org.text`, this is why `bolt` looks so much larger
-  than its emitted code.
-* `-rewrite` keeps a 64 K `.text` alignment but 2 M-aligns its new `PT_LOAD`,
-  leaving a 0.95 … 1.89 MB segment hole (7.6 % … 15.0 % of the file). After
-  stripping, the larger raw inter-segment hole is compacted, but this alignment
-  padding remains.
-* `bolt-rewrite-nohuge` removes the 2 M alignment (`.text` and `LOAD` both 64 K,
-  `seghole` back to the baseline ≈31 … 62 KB) and roughly halves the rewrite gap
-  (3.2 % … 6.2 %). It cuts the aarch64 `-rewrite` size increase from
+* Without BOLT the binaries are essentially gap-free (x86_64 0.02 % … 0.08 %,
+  aarch64 0.24 % … 0.71 %).
+* `bolt` (no-rewrite) aligns its added hot-text segment to 2 M; on x86_64 that
+  adds ≈2.0–2.9 MB of in-segment padding (6 % … 20 % of the file) and on
+  aarch64 ≈2.1 MB (5 % … 11 %). Together with keeping the original code as
+  `.bolt.org.text`, this is why `bolt` looks so much larger than its emitted
+  code.
+* `-rewrite` repacks the image. On **aarch64** it keeps a 64 K `.text`
+  alignment but 2 M-aligns its new `PT_LOAD`, leaving a 0.95 … 1.89 MB segment
+  hole (7.6 % … 15.0 % of the file); `bolt-rewrite-nohuge` removes the 2 M
+  alignment (`.text` and `LOAD` both 64 K, `seghole` back to the baseline
+  ≈ 31 … 62 KB) and roughly halves the rewrite gap (3.2 % … 6.2 %). On
+  **x86_64** the default `-rewrite` is already regular-page (4 K) aligned
+  (`.text` and all `PT_LOAD` segments 4 K, no segment hole), so `--no-huge-pages`
+  is a no-op there — the two x86_64 rewrite binaries differ by 16 B. BOLT's 2 M
+  alignment on x86_64 therefore shows up only in the `bolt` variant.
+* `bolt-rewrite-nohuge` cuts the aarch64 `-rewrite` size increase from
   +21 % … +36 % to **+15 % … +23 %** (1.4 … 1.8 MB per binary) with performance
-  within run-to-run noise of `bolt-rewrite` (§4.1).
+  within run-to-run noise of `bolt-rewrite` (§4.1); on x86_64 it changes neither
+  size nor layout.
 * The 2 M alignment is BOLT's default; the harness does not request
-  `--hugify`/`--hot-text`, so the huge pages are never actually used. On x86_64
-  the same switch falls back to 4 K regular pages; the x86_64 `nohuge` figures
-  are pending that platform's re-run.
+  `--hugify`/`--hot-text`, so the huge pages are never actually used.
 * `bolt`, `bolt-rewrite` and `bolt-rewrite-nohuge` all patch the ELF build-id
-  (last bit flipped) — verified on all twelve optimized aarch64 binaries.
+  (last bit flipped) — verified on all sixteen optimized binaries
+  (aarch64 + x86_64).
 
 ### 4.5 Functional validation
 
@@ -526,9 +556,12 @@ three optimized variants including `bolt-rewrite-nohuge`):
   additionally carries the preserved `.bolt.org.gcc_except_table` (see §2.2 and
   §4.4).
 
-The x86_64 run (same revision) reported the same end-to-end properties for its
-three-variant pipeline (`bolt` + `bolt-rewrite`): all outputs produced, 0
-workload errors, build-id patched.
+The x86_64 run (same revision, four-variant pipeline) reported the same
+end-to-end properties: all twelve optimized outputs (`bolt`, `bolt-rewrite`,
+`bolt-rewrite-nohuge` × 2 apps × 2 modes) produced, `--version` exits 0, and the
+full workload completed with 0 errors (sysbench `ignored errors = 0` /
+`reconnects = 0`; pgbench `failed transactions = 0`; no server
+`SIGSEGV`/`FATAL`/`PANIC`); build-id patched for all variants.
 
 ---
 
