@@ -70,11 +70,12 @@ app_basedir() { # <mode>
   echo "$INSTALLS/$1"
 }
 
-app_variant_bin() { # <mode> <baseline|bolt|bolt-rewrite>
+app_variant_bin() { # <mode> <baseline|bolt|bolt-rewrite|bolt-rewrite-nohuge>
   case "$2" in
-    baseline)     echo "$BINARIES/$1/postgres" ;;
-    bolt)         echo "$BINARIES/$1/postgres.bolt" ;;
-    bolt-rewrite) echo "$BINARIES/$1/postgres.bolt-rewrite" ;;
+    baseline)            echo "$BINARIES/$1/postgres" ;;
+    bolt)                echo "$BINARIES/$1/postgres.bolt" ;;
+    bolt-rewrite)        echo "$BINARIES/$1/postgres.bolt-rewrite" ;;
+    bolt-rewrite-nohuge) echo "$BINARIES/$1/postgres.bolt-rewrite-nohuge" ;;
     *) die "unknown variant '$2' (valid: $VALID_WHICH)" ;;
   esac
 }
@@ -145,7 +146,10 @@ app_server_start() { # <bin>
   local bin="$1" log sockdir
   local -a launcher=()
   log="$APP_RUNDIR/server-$APP_TAG.log"
-  sockdir="$APP_RUNDIR/sock-$APP_TAG"
+  # Keep the Unix-socket dir short and fixed: PostgreSQL rejects socket paths
+  # longer than 107 bytes, and APP_RUNDIR already embeds the (possibly long)
+  # variant name and timestamp.
+  sockdir="$APP_RUNDIR/s"
   mkdir -p "$sockdir"
   [ -n "${SERVER_CPUS:-}" ] && launcher=(taskset -c "$SERVER_CPUS")
   info "starting $APP_TAG server: $(basename "$bin") port=$APP_PORT cpus=${SERVER_CPUS:-off}"

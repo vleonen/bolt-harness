@@ -67,11 +67,12 @@ app_basedir() { # <mode>
   echo "$INSTALLS/$1"
 }
 
-app_variant_bin() { # <mode> <baseline|bolt|bolt-rewrite>
+app_variant_bin() { # <mode> <baseline|bolt|bolt-rewrite|bolt-rewrite-nohuge>
   case "$2" in
-    baseline)     echo "$BINARIES/$1/mariadbd" ;;
-    bolt)         echo "$BINARIES/$1/mariadbd.bolt" ;;
-    bolt-rewrite) echo "$BINARIES/$1/mariadbd.bolt-rewrite" ;;
+    baseline)            echo "$BINARIES/$1/mariadbd" ;;
+    bolt)                echo "$BINARIES/$1/mariadbd.bolt" ;;
+    bolt-rewrite)        echo "$BINARIES/$1/mariadbd.bolt-rewrite" ;;
+    bolt-rewrite-nohuge) echo "$BINARIES/$1/mariadbd.bolt-rewrite-nohuge" ;;
     *) die "unknown variant '$2' (valid: $VALID_WHICH)" ;;
   esac
 }

@@ -7,6 +7,8 @@
 #   <server>.bolt          BOLT_OPT_FLAGS (README defaults)
 #   <server>.bolt-rewrite  same flags + experimental -rewrite (optional; a
 #                          failure is reported and the variant is skipped)
+#   <server>.bolt-rewrite-nohuge
+#                          as above + --no-huge-pages (only when NOHUGE=1)
 set -euo pipefail
 
 HARNESS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -77,9 +79,15 @@ run_bolt() {
 
 run_bolt bolt 1
 run_bolt bolt-rewrite 0 -rewrite || true
+# Optional fourth variant (NOHUGE=1): the same rewrite but with BOLT's default
+# huge-page code alignment replaced by the regular page size, to isolate the
+# alignment/placement share of the output size (arch-neutral).
+if [ "$NOHUGE" = 1 ]; then
+  run_bolt bolt-rewrite-nohuge 0 -rewrite --no-huge-pages || true
+fi
 
 echo
-for v in bolt bolt-rewrite; do
+for v in bolt bolt-rewrite $([ "$NOHUGE" = 1 ] && echo bolt-rewrite-nohuge); do
   [ -f "$BINARIES/$MODE/bolt-$v.log" ] || continue
   info "tail of bolt-$v.log (dyno-stats):"
   tail -15 "$BINARIES/$MODE/bolt-$v.log" || true

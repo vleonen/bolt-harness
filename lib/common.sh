@@ -48,6 +48,16 @@ MERGE_FDATA="$BOLT_BIN_DIR/merge-fdata"
 VALID_MODES="pie no-pie"
 VALID_WHICH="baseline bolt bolt-rewrite"
 
+# Optional fourth variant: a second -rewrite build with BOLT's default huge-page
+# code alignment replaced by the target's regular page size (--no-huge-pages).
+# BOLT aligns relocated code to 2M by default (BC->PageAlign = HugePageSize),
+# which can leave multi-megabyte file holes; --no-huge-pages aligns to the
+# regular page (4K on x86_64, 64K on aarch64). Opt in with NOHUGE=1; the
+# harness scripts and the flag itself are architecture-neutral.
+: "${NOHUGE:=0}"
+NOHUGE_WHICH="bolt-rewrite-nohuge"
+[ "$NOHUGE" = 1 ] && VALID_WHICH="$VALID_WHICH $NOHUGE_WHICH"
+
 # Default optimization flags from bolt/README.md.
 : "${BOLT_OPT_FLAGS:=-reorder-blocks=ext-tsp -reorder-functions=hfsort -split-functions -split-all-cold -split-eh -dyno-stats}"
 

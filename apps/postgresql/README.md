@@ -1,13 +1,15 @@
 # bolt-harness — PostgreSQL 17
 
 Builds and benchmarks **PostgreSQL 17** with llvm-bolt in two ELF link modes
-(`pie`, `no-pie`) and three variants:
+(`pie`, `no-pie`) and three variants (plus an opt-in fourth,
+`bolt-rewrite-nohuge`, enabled with `NOHUGE=1`):
 
 | Variant | Binary | Description |
 |---|---|---|
 | baseline | `postgres` | unmodified build |
 | bolt | `postgres.bolt` | BOLT README flags, profile-driven |
 | bolt-rewrite | `postgres.bolt-rewrite` | same + experimental `-rewrite` |
+| bolt-rewrite-nohuge | `postgres.bolt-rewrite-nohuge` | `-rewrite --no-huge-pages` (regular-page code alignment); only with `NOHUGE=1` |
 
 The workload is **pgbench** (`select-only` + `tpcb-like`) against a locally
 initialized `pgbench` database.

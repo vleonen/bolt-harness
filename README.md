@@ -25,6 +25,7 @@ bolt-harness/
 │   ├── optimize.sh        # <binary>.bolt and <binary>.bolt-rewrite
 │   ├── bench.sh           # server lifecycle + warmup/reps + normalized results
 │   ├── compare.sh         # baseline vs bolt vs bolt-rewrite + geomean
+│   ├── size-report.sh     # stripped size + section/segment alignment overhead
 │   └── run-all.sh         # APP=<app> ./run-all.sh [modes...]
 ├── apps/<app>/            # per-application code
 │   ├── build.sh           # REQUIRED: application-specific build
@@ -118,6 +119,7 @@ adapter. Common ones:
 | `HARNESS_WORK` | `<repo>/work` | state root (container: `/work`) |
 | `BOLT_BIN_DIR` | `$HOME/src/llvm-project/build/bin` | `llvm-bolt`, `merge-fdata` |
 | `BOLT_OPT_FLAGS` | bolt README flags | optimization flags for `optimize.sh` |
+| `NOHUGE` | `0` | when `1`, also build/bench `bolt-rewrite-nohuge` (`-rewrite --no-huge-pages`), a rewrite with BOLT's default 2M huge-page code alignment replaced by the regular page size (4K x86_64 / 64K aarch64) |
 | `SERVER_CPUS` / `CLIENT_CPUS` | arch-aware | `taskset -c` CPU lists (empty = off) |
 
 Inside a container, `BOLT_BIN_DIR` is set by `rebuild.sh`, which auto-detects

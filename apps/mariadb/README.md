@@ -1,13 +1,15 @@
 # bolt-harness — MariaDB 11.4 LTS
 
 Builds and benchmarks **MariaDB 11.4 LTS** with llvm-bolt in two ELF link
-modes (`pie`, `no-pie`) and three variants:
+modes (`pie`, `no-pie`) and three variants (plus an opt-in fourth,
+`bolt-rewrite-nohuge`, enabled with `NOHUGE=1`):
 
 | Variant | Binary | Description |
 |---|---|---|
 | baseline | `mariadbd` | unmodified build |
 | bolt | `mariadbd.bolt` | BOLT README flags, profile-driven |
 | bolt-rewrite | `mariadbd.bolt-rewrite` | same + experimental `-rewrite` |
+| bolt-rewrite-nohuge | `mariadbd.bolt-rewrite-nohuge` | `-rewrite --no-huge-pages` (regular-page code alignment); only with `NOHUGE=1` |
 
 The workload is **sysbench OLTP** (`oltp_point_select` + `oltp_read_write`)
 against a locally prepared `sbtest` dataset.

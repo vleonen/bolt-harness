@@ -44,33 +44,44 @@ done
 print_metric() { # <metric> <high|low>
   local metric="$1" better="$2"
   echo
-  awk -F'\t' -v metric="$metric" -v better="$better" '
+  # Columns are driven by $VALID_WHICH (baseline first, then each variant with
+  # a delta column), so adding an opt-in variant (e.g. NOHUGE=1) needs no
+  # change here.
+  awk -F'\t' -v metric="$metric" -v better="$better" -v variants="$VALID_WHICH" '
+    BEGIN { nv = split(variants, V, " ") }
     $3 == metric { v[$1 SUBSEP $2] = $4; tests[$2] = 1 }
     END {
-      fmt = "%-20s %14s %14s %10s %14s %10s\n"
-      printf fmt, metric, "baseline", "bolt", "delta", "rewrite", "delta"
-      nb = nr = 0; gb = gr = 1
+      for (i = 1; i <= nv; i++) { g[i] = 1; n[i] = 0 }
+      line = sprintf("%-20s %14s", metric, V[1])
+      for (i = 2; i <= nv; i++) line = line sprintf(" %14s %10s", V[i], "delta")
+      print line
       for (t in tests) {
-        has_b = (("baseline" SUBSEP t) in v) && v["baseline" SUBSEP t] > 0
-        has_x = (("bolt" SUBSEP t) in v) && v["bolt" SUBSEP t] > 0
-        has_y = (("bolt-rewrite" SUBSEP t) in v) && v["bolt-rewrite" SUBSEP t] > 0
-        b = has_b ? sprintf("%.2f", v["baseline" SUBSEP t]) : "n/a"
-        x = has_x ? sprintf("%.2f", v["bolt" SUBSEP t]) : "n/a"
-        y = has_y ? sprintf("%.2f", v["bolt-rewrite" SUBSEP t]) : "n/a"
-        dx = (has_b && has_x) ? sprintf("%+9.2f%%", 100 * (v["bolt" SUBSEP t] - v["baseline" SUBSEP t]) / v["baseline" SUBSEP t]) : "n/a"
-        dy = (has_b && has_y) ? sprintf("%+9.2f%%", 100 * (v["bolt-rewrite" SUBSEP t] - v["baseline" SUBSEP t]) / v["baseline" SUBSEP t]) : "n/a"
-        printf fmt, t, b, x, dx, y, dy
-        if (has_b && has_x) { gb *= v["bolt" SUBSEP t] / v["baseline" SUBSEP t]; nb++ }
-        if (has_b && has_y) { gr *= v["bolt-rewrite" SUBSEP t] / v["baseline" SUBSEP t]; nr++ }
+        base = ("baseline" SUBSEP t) in v ? v["baseline" SUBSEP t] : 0
+        line = sprintf("%-20s %14s", t, (base > 0 ? sprintf("%.2f", base) : "n/a"))
+        for (i = 2; i <= nv; i++) {
+          key = V[i] SUBSEP t
+          if (base > 0 && (key in v) && v[key] > 0) {
+            line = line sprintf(" %14.2f %9.2f%%", v[key], 100 * (v[key] - base) / base)
+            g[i] *= v[key] / base; n[i]++
+          } else {
+            line = line sprintf(" %14s %10s", "n/a", "n/a")
+          }
+        }
+        print line
       }
-      printf fmt, "----", "----", "----", "----", "----", "----"
-      if (nb) gb ^= (1.0 / nb)
-      if (nr) gr ^= (1.0 / nr)
-      gxs = nb ? sprintf("%.4f", gb) : "n/a"
-      gxd = nb ? sprintf("%+9.2f%%", 100 * (gb - 1)) : "n/a"
-      gys = nr ? sprintf("%.4f", gr) : "n/a"
-      gyd = nr ? sprintf("%+9.2f%%", 100 * (gr - 1)) : "n/a"
-      printf "%-20s %14s %14s %10s %14s %10s\n", "GEOMEAN", "1.0000", gxs, gxd, gys, gyd
+      line = sprintf("%-20s %14s", "----", "----")
+      for (i = 2; i <= nv; i++) line = line sprintf(" %14s %10s", "----", "----")
+      print line
+      line = sprintf("%-20s %14s", "GEOMEAN", "1.0000")
+      for (i = 2; i <= nv; i++) {
+        if (n[i] > 0) {
+          gg = g[i] ^ (1.0 / n[i])
+          line = line sprintf(" %14.4f %9.2f%%", gg, 100 * (gg - 1))
+        } else {
+          line = line sprintf(" %14s %10s", "n/a", "n/a")
+        }
+      }
+      print line
       printf "(deltas are %s-better for this metric)\n", better
     }' "$TMP/means.tsv"
 }
