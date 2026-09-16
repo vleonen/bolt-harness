@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  YCSB's mongodb binding depends on com.allanbank:mongodb-async-driver, which
+  is only published over an http:// repository. Maven 3.8+ blocks external HTTP
+  repositories by default via the built-in `maven-default-http-blocker` mirror,
+  which fails the binding build. Redefining a mirror with that same id (and a
+  non-matching mirrorOf) disables the blocker. rebuild.sh installs this file at
+  /root/.m2/settings.xml inside the container.
+-->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+  <mirrors>
+    <mirror>
+      <id>maven-default-http-blocker</id>
+      <mirrorOf>dummy</mirrorOf>
+      <name>Disabled HTTP blocker (YCSB allanbank repo is HTTP-only)</name>
+      <url>http://0.0.0.0/</url>
+    </mirror>
+  </mirrors>
+</settings>

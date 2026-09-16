@@ -119,6 +119,12 @@ else
   msg "MongoDB Python venv already present: work/mongodb/venv"
 fi
 
+# Maven 3.8+ blocks HTTP-only repositories by default, but YCSB's mongodb
+# binding depends on com.allanbank:mongodb-async-driver, which is only served
+# over http://. Install a settings.xml that disables the built-in blocker.
+docker exec "$NAME" mkdir -p /root/.m2
+docker cp "$APP_DIR/maven-settings.xml" "$NAME:/root/.m2/settings.xml"
+
 # Build a YCSB distribution (source checkouts otherwise invoke Maven on every
 # run). YCSB master uses mongodb-driver-sync, which is compatible with 7.0.
 if [ ! -f "$MONGO_WORK/ycsb/.bolt-harness-ready" ]; then
