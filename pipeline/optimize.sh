@@ -57,10 +57,18 @@ run_bolt() {
     return 1
   fi
   # Guard the health check: a miscompiled -rewrite binary can loop forever on
-  # --version (seen on x86_64 no-pie). BOLT_VERIFY_TIMEOUT bounds it. stderr
-  # and the exit status are captured so a failing variant leaves forensics.
-  timeout "${BOLT_VERIFY_TIMEOUT:-30}" "$out" --version \
-    > /dev/null 2> "$verify_log"
+  # --version (seen on x86_64 no-pie). By default `<binary> --version` is run
+  # under BOLT_VERIFY_TIMEOUT. An adapter may define
+  #   app_verify_bin <mode> <variant> <path>
+  # for targets that are not directly executable (e.g. a shared library); the
+  # hook owns its own timeout. Either way stderr and the exit status are
+  # captured so a failing variant leaves forensics.
+  if declare -F app_verify_bin >/dev/null 2>&1; then
+    app_verify_bin "$MODE" "$variant" "$out" > /dev/null 2> "$verify_log"
+  else
+    timeout "${BOLT_VERIFY_TIMEOUT:-30}" "$out" --version \
+      > /dev/null 2> "$verify_log"
+  fi
   rc=$?
   if [ $rc -ne 0 ]; then
     if [ "$required" = 1 ]; then
@@ -72,6 +80,9 @@ run_bolt() {
     mv "$out" "$out.failed"
     return 1
   fi
+  # BOLT may write a non-executable output for a shared library, but the rest
+  # of the pipeline tests variants with `[ -x ]`. Harmless for executables.
+  chmod +x "$out" 2>/dev/null || true
   rm -f "$verify_log"
   info "[$MODE/$variant] -> $out ($(du -h "$out" | cut -f1) raw, $(stripped_size_bytes "$out") bytes stripped)"
   return 0

@@ -43,6 +43,7 @@ bolt-harness/
 | MariaDB 11.4 LTS | `apps/mariadb/` | `mariadbd` | sysbench OLTP (`oltp_point_select`, `oltp_read_write`) |
 | PostgreSQL 17 | `apps/postgresql/` | `postgres` | pgbench (`select-only`, `tpcb-like`) |
 | MongoDB 7.0 | `apps/mongodb/` | `mongod` | YCSB (`workloada`, `workloadc`) |
+| CPython 3.13 | `apps/python/` | (none; interpreter) | pyperformance |
 
 ## Quick start (MariaDB)
 
@@ -84,6 +85,21 @@ much longer than the other apps (~2 h for the first mode); both modes share one
 SCons tree, so the second is just a relink. Run builds detached and watch the
 per-mode log.
 
+## Quick start (CPython)
+
+```bash
+cd apps/python
+./rebuild.sh                 # build image, start container, clone CPython 3.13
+./rebuild.sh exec /harness/pipeline/run-all.sh pie no-pie
+```
+
+The two modes optimize different artifacts: `pie` builds a shared
+`libpython3.13.so.1.0` and BOLTs the library (loaded by the installed `python3`
+launcher via `LD_LIBRARY_PATH`); `no-pie` builds a static non-PIE `python3` and
+BOLTs the executable. The workload is **pyperformance** (a dependency-free,
+pyperf-only subset run without pyperformance's per-benchmark venvs).
+See `apps/python/README.md` for the recipe, flags and knobs.
+
 ## Pipeline
 
 | Stage | Script | What it does |
@@ -106,7 +122,10 @@ Stages are skippable with `SKIP_BUILD`, `SKIP_PROFILE`, `SKIP_OPTIMIZE`,
 3. `app.sh` implements the adapter hooks (see `apps/mariadb/app.sh`):
    `app_variant_bin`, `app_basedir`, `app_prepare_data`, `app_server_start`,
    `app_server_wait`, `app_server_stop`, `app_workload`, `app_parse_workload`;
-   optional `app_describe` records app-specific params in `env.txt`.
+   optional `app_describe` records app-specific params in `env.txt`, and
+   optional `app_verify_bin <mode> <variant> <path>` overrides `optimize.sh`'s
+   `--version` health check (needed for non-executable targets such as a shared
+   library; the hook owns its own timeout). See `apps/python/app.sh`.
 4. Add a `Dockerfile` + `rebuild.sh` (copy `apps/mariadb/` as a template).
    If the app cannot run as root, run the container as a host-matching
    non-root uid and mount a per-app state dir (see `apps/postgresql/`).
