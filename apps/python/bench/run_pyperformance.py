@@ -196,6 +196,10 @@ def main() -> int:
                 merged[bench_name] = bench
 
     suite = pyperf.BenchmarkSuite(list(merged.values()))
+    # Re-profiling/re-benchmarking reuses the run directory; pyperf refuses to
+    # overwrite an existing output file, so remove it first.
+    if os.path.exists(opts.output):
+        os.remove(opts.output)
     suite.dump(opts.output)
 
     with open(opts.tsv, "w", encoding="utf-8") as fh:

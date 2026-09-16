@@ -120,8 +120,11 @@ dumps the profile at each process exit (its default with sleep-time 0), and
 - `-instrumentation-file-append-pid` is required (one profile per forked
   benchmark worker).
 - `-skip-funcs=_PyEval_EvalFrameDefault,sre_ucs1_match/1,sre_ucs2_match/1,sre_ucs4_match/1`
-  excludes the computed-goto functions from instrumentation and optimization
-  (mirrors CPython's own `--enable-bolt` support).
+  excludes the computed-goto functions from **instrumentation** (mirrors
+  CPython's own `--enable-bolt` support). It is not passed to the optimization
+  pass: `-rewrite` re-lays-out the whole binary and rejects `-skip-funcs`
+  (skipped functions are neither disassembled nor emitted, silently corrupting
+  the output).
 - `app_verify_bin` gives `optimize.sh` a library-aware health check: it stages
   the `.so` under its SONAME, then runs the launcher with
   `-c 'import sys, pyperf, pyperformance; print(sys.version)'` so a miscompiled
@@ -133,9 +136,11 @@ dumps the profile at each process exit (its default with sleep-time 0), and
 - Only the executable (no-pie) or `libpython3.13.so` (pie) is BOLT-optimized;
   stdlib C extensions (`.so`) and, in `pie` mode, the thin `python3` launcher
   are not.
-- `-rewrite` is experimental. On the reference LLVM 23.1.1 hosts (x86_64 and
-  aarch64) both modes' `-rewrite` outputs crash on import and are automatically
-  skipped.
+- `-rewrite` is experimental. With LLVM 23.1.1 rev `d1723d9d` both modes'
+  `-rewrite` outputs crashed on import; rev `d0a877fc33a1` — reject `-rewrite`
+  with `-skip-funcs` plus an AArch64 TLSDESC descriptor retargeting fix — makes
+  them work on aarch64 (2026-09-17: `bolt`, `-rewrite` and `-rewrite-nohuge`
+  for both modes). x86_64 was not re-verified.
 - On aarch64, `no-pie` must be built with `PY_COMPUTED_GOTO=0`. With the
   default computed-goto eval loop, the BOLT-instrumented static executable
   aborts (`free(): invalid pointer`) inside `subprocess`/fork when

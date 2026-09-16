@@ -65,16 +65,20 @@
 # ---------------------------------------------------------------------------
 # CPython uses computed-goto dispatch in the eval loop and the regex matchers;
 # LLVM BOLT < 20 misdetects the label-address tables, so exclude those
-# functions from instrumentation and optimization (this mirrors CPython's own
-# --enable-bolt support). PY_COMPUTED_GOTO=0 removes the tables entirely at
-# build time if -instrument still crashes.
+# functions from instrumentation (this mirrors CPython's own --enable-bolt
+# support). PY_COMPUTED_GOTO=0 removes the tables entirely at build time if
+# -instrument still crashes.
 : "${PY_COMPUTED_GOTO:=1}"
 PY_SKIP_FUNCS="_PyEval_EvalFrameDefault,sre_ucs1_match/1,sre_ucs2_match/1,sre_ucs4_match/1"
 # pyperformance forks a worker per benchmark; append-pid keeps their profiles
 # separate (profile.sh globs profile*.fdata* and merge-fdata merges them).
 BOLT_INSTRUMENT_EXTRA_FLAGS="${BOLT_INSTRUMENT_EXTRA_FLAGS:-} -instrumentation-file-append-pid -skip-funcs=$PY_SKIP_FUNCS"
+# Do NOT skip functions in the optimization pass: -rewrite re-lays-out the whole
+# binary and rejects -skip-funcs (skipped functions are neither disassembled nor
+# emitted, leaving callers branching into reused addresses and silently
+# corrupting the output), so `bolt` and the `-rewrite` variants must run over
+# every function.
 # No -use-gnu-stack here: it is incompatible with the experimental -rewrite pass.
-BOLT_OPT_FLAGS="$BOLT_OPT_FLAGS -skip-funcs=$PY_SKIP_FUNCS"
 
 # ---------------------------------------------------------------------------
 # Helpers
