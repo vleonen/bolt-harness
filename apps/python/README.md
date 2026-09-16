@@ -133,8 +133,15 @@ dumps the profile at each process exit (its default with sleep-time 0), and
 - Only the executable (no-pie) or `libpython3.13.so` (pie) is BOLT-optimized;
   stdlib C extensions (`.so`) and, in `pie` mode, the thin `python3` launcher
   are not.
-- `-rewrite` is experimental. On the reference LLVM 23.1.1 x86_64 host both
-  modes' `-rewrite` outputs crash on import and are automatically skipped.
+- `-rewrite` is experimental. On the reference LLVM 23.1.1 hosts (x86_64 and
+  aarch64) both modes' `-rewrite` outputs crash on import and are automatically
+  skipped.
+- On aarch64, `no-pie` must be built with `PY_COMPUTED_GOTO=0`. With the
+  default computed-goto eval loop, the BOLT-instrumented static executable
+  aborts (`free(): invalid pointer`) inside `subprocess`/fork when
+  pyperformance spawns its worker, so profiling cannot run; the switch-based
+  eval loop avoids it. The `pie` target profiles fine with computed gotos on,
+  and x86_64 needs no workaround.
 - There is no persistent server: `app_server_start` records the target (and
   stages the `.so`); `app_workload` runs a fresh interpreter per pass; wait/stop
   are no-ops. `bench.sh` logs a benign "affinity check failed" because there is

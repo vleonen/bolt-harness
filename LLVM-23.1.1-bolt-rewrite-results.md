@@ -1,6 +1,6 @@
-# LLVM 23.1.1 BOLT `-rewrite` — Results on MariaDB, PostgreSQL and MongoDB (aarch64 & x86_64)
+# LLVM 23.1.1 BOLT `-rewrite` — Results on MariaDB, PostgreSQL, MongoDB and CPython (aarch64 & x86_64)
 
-Date: 2026-09-15 (aarch64 MongoDB added 2026-09-16)
+Date: 2026-09-15 (aarch64 MongoDB and CPython added 2026-09-16)
 Harness: `bolt-harness`
 Tool under test: `llvm-bolt`, LLVM **23.1.1**, branch `llvmorg-23.1.1-rewrite`:
 
@@ -21,13 +21,19 @@ Tool under test: `llvm-bolt`, LLVM **23.1.1**, branch `llvmorg-23.1.1-rewrite`:
   configurations) and, on 2026-09-16, on aarch64 (both link modes, four
   configurations including `bolt-rewrite-nohuge`) with the same BOLT revision
   (see §3.4).
+- **CPython**: CPython 3.13.9 (`v3.13.9`) is measured with the **pyperformance**
+  suite (`ops_per_sec`). It was validated with LLVM 23.1.1 on x86_64 (both
+  modes; `bolt` +10.2 % pie / +10.5 % no-pie) and, on 2026-09-16, on aarch64
+  (both modes, four configurations; `bolt` +22.57 % pie / +20.80 % no-pie). The
+  two modes BOLT different targets: `pie` optimizes shared
+  `libpython3.13.so.1.0`, `no-pie` the static `python3` executable. All
+  `-rewrite` outputs crash on import on both architectures (see §3.5).
 
 ## Summary
 
 The `-rewrite` feature was validated end-to-end on three real server
-applications in both ELF link modes, on **aarch64** and **x86_64** (MongoDB on
-both architectures in both link modes), against the standard profile-driven
-BOLT pipeline.
+applications plus the CPython interpreter, in both ELF link modes, on
+**aarch64** and **x86_64**, against the standard profile-driven BOLT pipeline.
 
 **aarch64** (rev `d1723d9d`; four configurations; MongoDB added 2026-09-16)
 
@@ -39,6 +45,8 @@ BOLT pipeline.
 | PostgreSQL | no-pie | **+35.23 %** | **+35.42 %** | **+36.78 %** | 0 |
 | MongoDB | pie | **+34.30 %** | **+43.68 %** | **+42.71 %** | 0 |
 | MongoDB | no-pie | **+40.97 %** | **+40.51 %** | **+40.55 %** | 0 |
+| CPython | pie | **+22.57 %** | — | — | 0 |
+| CPython | no-pie | **+20.80 %** | — | — | 0 |
 
 **x86_64** (2026-09-15, rev `d1723d9d`; four configurations)
 
@@ -50,17 +58,24 @@ BOLT pipeline.
 | PostgreSQL | no-pie | **+16.36 %** | **+18.31 %** | **+15.59 %** | 0 |
 | MongoDB | pie | **+24.35 %** | **+20.05 %** | — | 0 |
 | MongoDB | no-pie | **+28.89 %** | **+32.73 %** | — | 0 |
+| CPython | pie | **+10.2 %** | — | — | 0 |
+| CPython | no-pie | **+10.5 %** | — | — | 0 |
 
 (Throughput geomean vs. the unmodified baseline; higher is better. MongoDB was
 measured on x86_64 on 2026-09-15 with the standard three configurations, and on
 aarch64 (both link modes) on 2026-09-16 with the fourth `bolt-rewrite-nohuge`
 configuration. `bolt-rewrite-nohuge` is the regular `-rewrite` build with
 BOLT's default 2 M huge-page code alignment replaced by the target's regular
-page size, i.e. `-rewrite --no-huge-pages` — see §2.3.)
+page size, i.e. `-rewrite --no-huge-pages` — see §2.3. CPython is measured with
+pyperformance, so its figure is the `ops_per_sec` geomean; it was run on x86_64
+on 2026-09-15 (three configurations) and on aarch64 on 2026-09-16 (four
+configurations; `no-pie` uses `PY_COMPUTED_GOTO=0`, see §3.5). Both CPython
+`-rewrite` outputs crash on import on both architectures, hence the `—` cells.)
 
 All optimized `-rewrite` binaries (plain and `bolt-rewrite-nohuge`) in the
 configurations above are produced, start, and complete the full benchmark
-workload with zero errors.
+workload with zero errors — except CPython, whose `-rewrite` outputs crash on
+import on both architectures and are parked as `.failed` (see §3.5, §4.5).
 
 Binary size (measured on **stripped** binaries, §4.4): on **x86_64** `bolt`
 grows the runtime image by +16.5 % … +55 % (it keeps the original code), while
@@ -72,7 +87,9 @@ padding introduced by BOLT's default 2 M code alignment. Replacing it with the
 regular page size (`bolt-rewrite-nohuge`) removes the aarch64 `-rewrite`
 overhead (down to +3.4 % … +23 %). MongoDB `bolt` adds +16.5 % / +17.2 %
 (x86_64 pie/no-pie) / +66.7 % / +69.2 % (aarch64 pie/no-pie) and `-rewrite`
-+2.1 % / +2.3 % / +3.7 % / +4.0 %.
++2.1 % / +2.3 % / +3.7 % / +4.0 %. On aarch64 CPython `bolt` adds +105.6 %
+(pie) / +116.4 % (no-pie): the interpreter is small, so BOLT's retained original
+code dominates the deployed size (see §4.4).
 
 ---
 
@@ -350,6 +367,56 @@ Workload: **YCSB** (`mongodb` binding, `mongodb-driver-sync`) — `workloada`
 16 threads, 15 s per workload, 1 warmup + 3 recorded reps, WiredTiger cache
 4 GB.
 
+### 3.5 CPython 3.13.9 (`v3.13.9`, github.com/python/cpython)
+
+The harness builds CPython 3.13.9 out-of-tree with `-O2` and BOLT-friendly
+flags; each mode optimizes a different artifact, so `compare.sh` compares
+within a mode:
+
+| Mode | CPython build | BOLT target |
+|---|---|---|
+| `pie` | `--enable-shared` | `libpython3.13.so.1.0` (loaded by the installed `python3` launcher via a staged SONAME on `LD_LIBRARY_PATH`) |
+| `no-pie` | static libpython in the executable, `-fno-pie -no-pie` | the `python3` executable |
+
+```bash
+CFLAGS:  -O2 -fno-omit-frame-pointer -fno-stack-protector \
+         [-mbranch-protection=none] -fno-reorder-blocks-and-partition
+LDFLAGS: -Wl,-q
+pie:     --enable-shared
+no-pie:  CFLAGS_NODIST=-fno-pie  LINKCC='gcc -fno-pie -no-pie'
+common:  --with-ensurepip=install --disable-test-modules --with-computed-gotos[=no]
+```
+
+The workload is **pyperformance** 1.14.0 run through
+`apps/python/bench/run_pyperformance.py` (each benchmark's `run_benchmark.py`
+under the prefix-installed `pyperf`, so no per-benchmark venvs). It reports
+`ops_per_sec` medians for 24 benchmarks; 1 warmup + 3 recorded reps.
+
+BOLT specifics: `-instrumentation-file-append-pid` (pyperformance forks a
+worker per benchmark) and `-skip-funcs=_PyEval_EvalFrameDefault,`
+`sre_ucs1_match/1,sre_ucs2_match/1,sre_ucs4_match/1` to exclude the computed-goto
+dispatch functions; `PROFILE_SLEEP_TIME=0` so BOLT dumps the profile at process
+exit (its periodic dump thread deadlocks with pyperformance's forking).
+`app.sh` defines `app_verify_bin`, which stages a `pie` `.so` and runs
+`import sys, pyperf, pyperformance` as the health check, so a miscompiled
+`-rewrite` output that survives `--version` but crashes on real imports is
+caught and parked as `.failed`.
+
+**aarch64 non-PIE needs `PY_COMPUTED_GOTO=0`.** With the default computed-goto
+eval loop, the BOLT-instrumented static `no-pie` executable aborts
+(`free(): invalid pointer`) inside `subprocess`/fork when pyperformance spawns
+its worker, so the workload cannot run; the switch-based eval loop
+(`PY_COMPUTED_GOTO=0`) avoids it, and the aarch64 `no-pie` results below
+therefore use the switch eval loop. The `pie` target (shared libpython) profiles
+fine with computed gotos on.
+
+Baseline binary characteristics (aarch64):
+
+| Arch | Mode | BOLT target | ELF | relocations | raw | stripped |
+|---|---|---|---|---|---|---|
+| aarch64 | pie | `libpython3.13.so.1.0` | `ELF 64-bit LSB shared object` | 129,830 | 8.2 MB | 5,382,176 B |
+| aarch64 | no-pie | `python3` | `ELF 64-bit LSB executable` | 108,706 | 7.6 MB | 4,845,784 B |
+
 ---
 
 ## 4. Results
@@ -366,12 +433,16 @@ Geomean of per-workload ratios (baseline = 1.0000); higher is better.
 | aarch64 | PostgreSQL | no-pie | **+35.23 %** | **+35.42 %** | **+36.78 %** |
 | aarch64 | MongoDB | pie | **+34.30 %** | **+43.68 %** | **+42.71 %** |
 | aarch64 | MongoDB | no-pie | **+40.97 %** | **+40.51 %** | **+40.55 %** |
+| aarch64 | CPython | pie | **+22.57 %** | — | — |
+| aarch64 | CPython | no-pie | **+20.80 %** | — | — |
 | x86_64 | MariaDB | pie | **+10.27 %** | **+16.39 %** | **+22.40 %** |
 | x86_64 | MariaDB | no-pie | **+20.69 %** | **+21.46 %** | **+21.44 %** |
 | x86_64 | PostgreSQL | pie | **+7.66 %** | **+1.79 %** | **+2.46 %** |
 | x86_64 | PostgreSQL | no-pie | **+16.36 %** | **+18.31 %** | **+15.59 %** |
 | x86_64 | MongoDB | pie | **+24.35 %** | **+20.05 %** | — |
 | x86_64 | MongoDB | no-pie | **+28.89 %** | **+32.73 %** | — |
+| x86_64 | CPython | pie | **+10.2 %** | — | — |
+| x86_64 | CPython | no-pie | **+10.5 %** | — | — |
 
 On aarch64 `bolt` and `-rewrite` are within a few points of each other
 (MongoDB `pie` is the outlier, where `-rewrite` leads by ~9 points), as
@@ -379,9 +450,11 @@ expected for a full re-emission vs. in-place patching; on x86_64 the variants
 are closer and the ordering is within run-to-run noise. `bolt-rewrite-nohuge`
 performs within run-to-run noise of `bolt-rewrite` on both architectures
 (aarch64 −1.0 … +3.7 points, x86_64 −2.7 … +6.0 points; it is a *size* change,
-not a reordering change). All deltas were measured at rev `d1723d9d` in one
-four-variant session per app/mode; absolute levels vary between runs (see §5.5),
-but the ordering and magnitude are stable.
+not a reordering change). CPython's figures are `ops_per_sec` geomeans
+(pyperformance); its `-rewrite` outputs crash on import, so those cells are `—`
+(§3.5). All deltas were measured at rev `d1723d9d` in one four-variant session
+per app/mode; absolute levels vary between runs (see §5.5), but the ordering and
+magnitude are stable.
 
 ### 4.2 Per-workload throughput means
 
@@ -473,6 +546,64 @@ but the ordering and magnitude are stable.
 | workloada | TPS | 32,247.78 | 41,753.12 | 44,134.14 |
 | workloadc | TPS | 52,042.13 | 66,775.41 | 66,987.86 |
 
+**aarch64 — CPython — pie** (`ops_per_sec`)
+
+| workload | metric | baseline | bolt |
+|---|---|---|---|
+| pyflate | ops_per_sec | 1.70 | 1.80 |
+| scimark_sor | ops_per_sec | 5.42 | 6.05 |
+| nbody | ops_per_sec | 9.45 | 9.53 |
+| regex_v8 | ops_per_sec | 156.48 | 331.06 |
+| scimark_lu | ops_per_sec | 5.95 | 7.22 |
+| scimark_sparse_mat_mult | ops_per_sec | 2,378.96 | 5,472.86 |
+| float | ops_per_sec | 9.24 | 20.26 |
+| python_startup | ops_per_sec | 124.54 | 173.14 |
+| nqueens | ops_per_sec | 7.58 | 8.96 |
+| go | ops_per_sec | 5.86 | 6.09 |
+| richards | ops_per_sec | 33.89 | 35.92 |
+| scimark_fft | ops_per_sec | 2.24 | 2.56 |
+| fannkuch | ops_per_sec | 1.68 | 2.03 |
+| pickle | ops_per_sec | 31,105,200.00 | 33,821,200.00 |
+| spectral_norm | ops_per_sec | 6.49 | 7.59 |
+| telco | ops_per_sec | 1,336.28 | 1,574.96 |
+| unpickle_pure_python | ops_per_sec | 109,543.00 | 119,169.00 |
+| deltablue | ops_per_sec | 7,736.62 | 8,089.21 |
+| json_loads | ops_per_sec | 6,652,533.33 | 7,779,043.33 |
+| pickle_pure_python | ops_per_sec | 40,885.13 | 44,011.43 |
+| scimark_monte_carlo | ops_per_sec | 22.28 | 24.87 |
+| json_dumps | ops_per_sec | 525.93 | 618.58 |
+| hexiom | ops_per_sec | 2,140.94 | 2,286.69 |
+| regex_compile | ops_per_sec | 6.42 | 7.34 |
+
+**aarch64 — CPython — no-pie** (`ops_per_sec`; switch-based eval loop, §3.5)
+
+| workload | metric | baseline | bolt |
+|---|---|---|---|
+| pyflate | ops_per_sec | 1.62 | 1.75 |
+| scimark_sor | ops_per_sec | 5.34 | 5.73 |
+| nbody | ops_per_sec | 8.20 | 8.34 |
+| regex_v8 | ops_per_sec | 146.30 | 152.36 |
+| scimark_lu | ops_per_sec | 5.65 | 6.49 |
+| scimark_sparse_mat_mult | ops_per_sec | 2,436.07 | 5,393.26 |
+| float | ops_per_sec | 9.04 | 19.84 |
+| python_startup | ops_per_sec | 172.64 | 218.77 |
+| nqueens | ops_per_sec | 7.56 | 8.75 |
+| go | ops_per_sec | 5.46 | 5.72 |
+| richards | ops_per_sec | 30.46 | 33.68 |
+| scimark_fft | ops_per_sec | 2.29 | 2.52 |
+| fannkuch | ops_per_sec | 1.66 | 1.99 |
+| pickle | ops_per_sec | 33,003,966.67 | 35,704,466.67 |
+| spectral_norm | ops_per_sec | 6.39 | 7.04 |
+| telco | ops_per_sec | 1,467.01 | 1,713.61 |
+| unpickle_pure_python | ops_per_sec | 103,271.33 | 113,010.00 |
+| deltablue | ops_per_sec | 7,213.53 | 7,836.77 |
+| json_loads | ops_per_sec | 7,434,966.67 | 8,353,453.33 |
+| pickle_pure_python | ops_per_sec | 38,492.53 | 41,717.90 |
+| scimark_monte_carlo | ops_per_sec | 21.69 | 23.94 |
+| json_dumps | ops_per_sec | 565.85 | 1,313.60 |
+| hexiom | ops_per_sec | 1,756.36 | 1,873.77 |
+| regex_compile | ops_per_sec | 5.92 | 6.54 |
+
 ### 4.3 Latency (geomean vs. baseline, lower is better)
 
 | Arch | App | Mode | `bolt` | `bolt-rewrite` | `bolt-rewrite-nohuge` |
@@ -519,6 +650,9 @@ Per-workload average latency (ms):
 | x86_64 | MongoDB | no-pie | workloada | 0.48 | 0.37 | 0.35 | — |
 | x86_64 | MongoDB | no-pie | workloadc | 0.30 | 0.24 | 0.23 | — |
 
+CPython/pyperformance reports only `ops_per_sec` (no latency metric), so it has
+no row in the latency tables.
+
 ### 4.4 Binary size
 
 The BOLT input is linked with `-Wl,-q`, so it carries non-allocatable `.rela.*`
@@ -548,6 +682,8 @@ so all deltas below use **stripped file size**, for both architectures.
 | PostgreSQL | no-pie | 9,281,184 | 18,902,104 (**+103.7 %**) | 12,620,504 (**+36.0 %**) | 11,440,880 (**+23.3 %**) |
 | MongoDB | pie | 120,792,312 | 201,400,376 (**+66.7 %**) | 125,297,664 (**+3.7 %**) | 124,904,472 (**+3.4 %**) |
 | MongoDB | no-pie | 116,466,936 | 197,065,264 (**+69.2 %**) | 121,106,032 (**+4.0 %**) | 120,647,304 (**+3.6 %**) |
+| CPython | pie | 5,382,176 | 11,063,200 (**+105.6 %**) | — | — |
+| CPython | no-pie | 4,845,784 | 10,485,304 (**+116.4 %**) | — | — |
 
 The earlier raw (unstripped) figures for these binaries (e.g. PostgreSQL
 `-rewrite` ≈ −18 %) were an artifact of comparing a relocation-heavy baseline
@@ -591,6 +727,10 @@ the stripped file.
 | MongoDB | no-pie | bolt | 2 M | 2 M | 9.5 KB | 2.01 MB | 1.07 % |
 | MongoDB | no-pie | bolt-rewrite | 64 K | 2 M | 553 KB | 681 KB | 0.58 % |
 | MongoDB | no-pie | bolt-rewrite-nohuge | 64 K | 64 K | 105 KB | 233 KB | 0.20 % |
+| CPython | pie | baseline | 16 | 64 K | 26 KB | 26 KB | 0.50 % |
+| CPython | pie | bolt | 2 M | 2 M | 26 KB | 2.03 MB | 19.20 % |
+| CPython | no-pie | baseline | 64 | 64 K | 13 KB | 13 KB | 0.27 % |
+| CPython | no-pie | bolt | 2 M | 2 M | 13 KB | 2.01 MB | 20.12 % |
 
 **x86_64**
 
@@ -625,7 +765,7 @@ Observations:
   aarch64 0.01 % … 0.71 %).
 * `bolt` (no-rewrite) aligns its added hot-text segment to 2 M; on x86_64 that
   adds ≈2.0–2.9 MB of in-segment padding (1.4 % … 20 % of the file) and on
-  aarch64 ≈2.1 MB (5 % … 11 %). Together with keeping the original code as
+  aarch64 ≈2.0–2.2 MB (1 % … 20 %). Together with keeping the original code as
   `.bolt.org.text`, this is why `bolt` looks so much larger than its emitted
   code.
 * `-rewrite` repacks the image. On **aarch64** it keeps a 64 K `.text`
@@ -702,6 +842,16 @@ workload completed with **0 errors** (`FAILED`/`NOT_FOUND` = 0; no server
 control flow` (2 `BOLT-WARNING` each). Build-id is patched for all six aarch64
 MongoDB optimized binaries.
 
+CPython 3.13.9 was validated on aarch64 (2026-09-16) in both modes: the `bolt`
+target passes `app_verify_bin` (staging the `pie` `.so` and importing `sys,
+pyperf, pyperformance`), and the full pyperformance suite (24 benchmarks, 1
+warmup + 3 reps) completed for both baseline and `bolt` with **0 errors** (no
+failed/skipped benchmarks, no crashes). No `BOLT-ERROR`/`corrupted control flow`
+in any optimize log. Both `-rewrite` variants (plain and `--no-huge-pages`)
+crash on import (`SIGSEGV`, exit 139) in both modes and are parked as `.failed`
+— the same outcome as on x86_64. As noted in §3.5, aarch64 `no-pie`
+instrumentation additionally requires `PY_COMPUTED_GOTO=0`.
+
 ---
 
 ## 5. Issues, caveats and notes
@@ -770,6 +920,16 @@ MongoDB optimized binaries.
     bounds each run. Measured on x86_64 in both link modes and on aarch64 in
     both link modes (four variants; the aarch64 pass also needs
     `--drop-cortex-a53-843419-veneers`).
+11. **CPython `-rewrite` crash and aarch64 non-PIE instrumentation.** Both
+    CPython `-rewrite` outputs (plain and `--no-huge-pages`), in both modes and
+    on both architectures, crash on import (`SIGSEGV`) and are parked as
+    `.failed`; only `bolt` is usable. Separately, on aarch64 the instrumented
+    static `no-pie` `python3` aborts (`free(): invalid pointer`) inside
+    `subprocess`/fork when pyperformance spawns its worker, so profiling cannot
+    run with the default computed-goto eval loop; building that mode with
+    `PY_COMPUTED_GOTO=0` (switch-based eval loop) avoids it. The `pie` target
+    (shared libpython) profiles fine with computed gotos on. On x86_64 no such
+    workaround was needed.
 
 ---
 
@@ -816,6 +976,20 @@ LLVM_SRC=$HOME/src/llvm-project-23 ./rebuild.sh exec \
 # aarch64: use LLVM_SRC=$HOME/src/llvm-23.1.1 and pass the veneer flag, e.g.
 #   BOLT_INSTRUMENT_EXTRA_FLAGS=--drop-cortex-a53-843419-veneers
 #   BOLT_OPT_FLAGS='<BOLT_FLAGS> --drop-cortex-a53-843419-veneers'
+```
+
+CPython uses its own container; `pie` BOLTs the shared libpython and `no-pie`
+the static executable. On aarch64, add the veneer flag and build `no-pie` with
+`PY_COMPUTED_GOTO=0` (§3.5):
+
+```bash
+cd $HOME/src/bolt-harness/apps/python
+LLVM_SRC=$HOME/src/llvm-23.1.1 ./rebuild.sh              # image + clone CPython
+LLVM_SRC=$HOME/src/llvm-23.1.1 ./rebuild.sh exec env NOHUGE=1 PY_COMPUTED_GOTO=0 \
+  BOLT_INSTRUMENT_EXTRA_FLAGS="--drop-cortex-a53-843419-veneers" \
+  BOLT_OPT_FLAGS="<BOLT_FLAGS> --drop-cortex-a53-843419-veneers" \
+  /harness/pipeline/run-all.sh pie no-pie
+# x86_64: omit the veneer flag and PY_COMPUTED_GOTO=0
 ```
 
 ### 2026-09-15 aarch64 re-validation + `nohuge` (no re-profiling)
@@ -883,3 +1057,12 @@ The pre-re-validation (rev `502a8fc`) optimized binaries and logs are kept under
   binaries/build info `…/_state/mongodb/binaries/<mode>/`; merged profiles
   `…/_state/mongodb/profiles/<mode>/profile.merged.fdata`; BOLT logs
   `…/_state/mongodb/binaries/<mode>/bolt-{bolt,bolt-rewrite,bolt-rewrite-nohuge}.log`.
+* CPython (aarch64, both link modes, 2026-09-16 four-variant): run logs
+  `bolt-harness/work/validate-aarch64-python-pie.out` and `…-nopie.out` (the
+  latter with `PY_COMPUTED_GOTO=0`); stripped size/alignment report
+  `bolt-harness/work/validate-aarch64-python-sizes.txt`; results under
+  `…/_state/python/results/<mode>/<variant>/<timestamp>/summary.tsv`; binaries
+  and build info `…/_state/python/binaries/<mode>/`; merged profile
+  `…/_state/python/profiles/<mode>/profile.merged.fdata`; BOLT logs
+  `…/_state/python/binaries/<mode>/bolt-{bolt,bolt-rewrite,bolt-rewrite-nohuge}.log`.
+  x86_64 CPython figures are recorded in commit `a78e709`.
