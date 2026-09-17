@@ -1,6 +1,6 @@
 # LLVM 23.1.1 BOLT `-rewrite` — Results on MariaDB, PostgreSQL, MongoDB and CPython (aarch64 & x86_64)
 
-Date: 2026-09-15 (aarch64 MongoDB/CPython added 2026-09-16; aarch64 re-validated at `d0a877f` on 2026-09-17)
+Date: 2026-09-15 (aarch64 MongoDB/CPython added 2026-09-16; aarch64 re-validated at `d0a877f` on 2026-09-17; x86_64 re-validated at `d0a877f` on 2026-09-17 with re-instrumentation)
 Harness: `bolt-harness`
 Tool under test: `llvm-bolt`, LLVM **23.1.1**, branch `llvmorg-23.1.1-rewrite`:
 
@@ -19,24 +19,39 @@ Tool under test: `llvm-bolt`, LLVM **23.1.1**, branch `llvmorg-23.1.1-rewrite`:
   baselines has TLS-family relocations and none uses `-skip-funcs`) — binary
   sizes are byte-identical and the re-benchmark deltas are within run-to-run
   noise (§4.1).
-- **x86_64**: `$HOME/src/llvm-project-23/build23/bin/llvm-bolt`, same branch,
-  revision `d1723d9d8a4d` (the same revision as aarch64; both architectures are
-  now on one revision). The x86_64 results below also include the fourth
-  configuration, `bolt-rewrite-nohuge`.
+- **x86_64**: `$HOME/src/llvm-project-23/build23/bin/llvm-bolt`, same branch.
+  The x86_64 set includes the fourth configuration, `bolt-rewrite-nohuge`. The
+  whole x86_64 set was re-validated on 2026-09-17 with revision
+  `d0a877fc33a1` (the same revision as aarch64; both architectures are now on
+  one revision) with baselines and datasets reused (`SKIP_BUILD=1`) and
+  **re-instrumentation**: profile → optimize → bench → compare re-run in one
+  four-variant session per app/mode. For MariaDB/PostgreSQL/MongoDB the new
+  `d0a877f` behavior is a no-op vs. `d1723d9d` (no TLS-family relocations, no
+  `-skip-funcs`), so their `-rewrite`/`-rewrite-nohuge` outputs are produced,
+  verified and benched on x86_64 as well — closing the earlier "x86_64
+  `-rewrite` not re-verified" gap. CPython on x86_64 keeps `-skip-funcs` in the
+  optimization pass (without it the opt pass corrupts the computed-goto
+  dispatch, independently of the revision), so BOLT rejects `-rewrite` there
+  and only `bolt` is measured (§3.5).
 - **MongoDB**: MongoDB 7.0 (`r7.0.43`, built from source with SCons) was added
   to the harness and measured with YCSB on x86_64 (2026-09-15, standard three
   configurations) and, on 2026-09-16, on aarch64 (both link modes, four
   configurations including `bolt-rewrite-nohuge`) with the same BOLT revision
   (see §3.4).
 - **CPython**: CPython 3.13.9 (`v3.13.9`) is measured with the **pyperformance**
-  suite (`ops_per_sec`). It was validated with LLVM 23.1.1 on x86_64 (both
-  modes; `bolt` +10.2 % pie / +10.5 % no-pie) and on aarch64 (2026-09-17, both
+  suite (`ops_per_sec`). It is validated with LLVM 23.1.1 on x86_64 (both
+  modes; `bolt` +10.02 % pie / +18.55 % no-pie at rev `d0a877f`, 2026-09-17
+  re-validation) and on aarch64 (2026-09-17, both
   modes, four configurations; `bolt` +19.72 % pie / +21.34 % no-pie,
   `-rewrite` +21.14 % / +19.77 %, `-rewrite-nohuge` +18.32 % / +19.93 %). The
   two modes BOLT different targets: `pie` optimizes shared
   `libpython3.13.so.1.0`, `no-pie` the static `python3` executable. The aarch64
   `-rewrite` outputs were the motivation for the two fixes in `d0a877fc33a1`
-  and now run (see §3.5).
+  and now run (see §3.5). On x86_64 `-rewrite` remains unavailable *by
+  construction*: the optimization pass must skip the computed-goto functions
+  (they are corrupted otherwise, on any revision), and `d0a877f` BOLT rejects
+  `-rewrite` combined with `-skip-funcs` — the `-rewrite`/`-rewrite-nohuge`
+  variants fail fast with `BOLT-ERROR` and are skipped by the pipeline.
 
 ## Summary
 
@@ -57,44 +72,50 @@ applications plus the CPython interpreter, in both ELF link modes, on
 | CPython | pie | **+19.72 %** | **+21.14 %** | **+18.32 %** | 0 |
 | CPython | no-pie | **+21.34 %** | **+19.77 %** | **+19.93 %** | 0 |
 
-**x86_64** (2026-09-15, rev `d1723d9d`; four configurations)
+**x86_64** (rev `d0a877f`, 2026-09-17 re-validation with re-instrumentation; four configurations)
 
 | App | Mode | `bolt` | `bolt-rewrite` | `bolt-rewrite-nohuge` | workload errors |
 |---|---|---|---|---|---|
-| MariaDB | pie | **+10.27 %** | **+16.39 %** | **+22.40 %** | 0 |
-| MariaDB | no-pie | **+20.69 %** | **+21.46 %** | **+21.44 %** | 0 |
-| PostgreSQL | pie | **+7.66 %** | **+1.79 %** | **+2.46 %** | 0 |
-| PostgreSQL | no-pie | **+16.36 %** | **+18.31 %** | **+15.59 %** | 0 |
-| MongoDB | pie | **+24.35 %** | **+20.05 %** | — | 0 |
-| MongoDB | no-pie | **+28.89 %** | **+32.73 %** | — | 0 |
-| CPython | pie | **+10.2 %** | — | — | 0 |
-| CPython | no-pie | **+10.5 %** | — | — | 0 |
+| MariaDB | pie | **+16.79 %** | **+10.58 %** | **+8.93 %** | 0 |
+| MariaDB | no-pie | **+23.96 %** | **+22.42 %** | **+22.14 %** | 0 |
+| PostgreSQL | pie | **+15.65 %** | **+12.78 %** | **+9.67 %** | 0 |
+| PostgreSQL | no-pie | **+15.76 %** | **+14.97 %** | **+15.15 %** | 0 |
+| MongoDB | pie | **+17.78 %** | **+13.96 %** | **+11.05 %** | 0 |
+| MongoDB | no-pie | **+20.40 %** | **+15.30 %** | **+14.71 %** | 0 |
+| CPython | pie | **+10.02 %** | rej. | rej. | 0 |
+| CPython | no-pie | **+18.55 %** | rej. | rej. | 0 |
 
-(Throughput geomean vs. the unmodified baseline; higher is better. All aarch64
-rows are the 2026-09-17 re-validation at rev `d0a877f` (baselines, datasets and
-merged profiles reused, optimization and benchmark re-run in one four-variant
-session per app/mode). MongoDB was first measured on x86_64 on 2026-09-15;
+(Throughput geomean vs. the unmodified baseline; higher is better. All rows are
+the 2026-09-17 re-validation at rev `d0a877f` — baselines and datasets reused
+(`SKIP_BUILD=1`), BOLT **re-instrumentation** included, optimization and
+benchmark re-run in one four-variant session per app/mode. MongoDB was first
+measured on x86_64 on 2026-09-15;
 CPython is measured with pyperformance, so its figure is the `ops_per_sec`
-geomean (`no-pie` uses `PY_COMPUTED_GOTO=0`, see §3.5). `bolt-rewrite-nohuge`
+geomean. `bolt-rewrite-nohuge`
 is the regular `-rewrite` build with BOLT's default 2 M huge-page code
 alignment replaced by the target's regular page size, i.e.
-`-rewrite --no-huge-pages` — see §2.3.)
+`-rewrite --no-huge-pages` — see §2.3. "rej." = BOLT rejects the combination
+(`-rewrite` with `-skip-funcs`, required for CPython on x86_64, §3.5); the
+pipeline parks nothing and simply skips the variant.)
 
 All optimized `-rewrite` binaries (plain and `bolt-rewrite-nohuge`) in the
 configurations above are produced, start, and complete the full benchmark
-workload with zero errors. (With rev `d1723d9d`, CPython's `-rewrite` outputs
-crashed on import; the rev `d0a877f` fixes resolve that on aarch64 — see §3.5,
-§4.5.)
+workload with zero errors — on **both** architectures now. (With rev
+`d1723d9d`, CPython's aarch64 `-rewrite` outputs crashed on import; the rev
+`d0a877f` fixes resolve that on aarch64 — see §3.5, §4.5. On x86_64 CPython
+`-rewrite` is rejected by BOLT by design, see the CPython bullet above.)
 
 Binary size (measured on **stripped** binaries, §4.4): on **x86_64** `bolt`
-grows the runtime image by +16.5 % … +55 % (it keeps the original code), while
-`-rewrite` is near size-neutral (≤ 2.3 %); because x86_64 `-rewrite` is
-already regular-page aligned, `bolt-rewrite-nohuge` matches `-rewrite`
-(≤ 16 B). On **aarch64** `bolt` grows the runtime image by +60 % … +104 % and
+grows the runtime image by +16.6 % … +28 % for the servers and +89 % … +98 %
+for CPython (it keeps the original code), while
+`-rewrite` is near size-neutral (≤ 2.3 %); for MariaDB/PostgreSQL x86_64
+`-rewrite` is already regular-page aligned and `bolt-rewrite-nohuge` matches it
+(≤ 24 B), while MongoDB `-rewrite` retains a 2 M-aligned PT_LOAD that
+`--no-huge-pages` removes (+2.1 %/+2.3 % → +0.7 %/+0.8 %). On **aarch64** `bolt` grows the runtime image by +60 % … +116 % and
 `-rewrite` by +3.7 % … +42.5 %; a substantial part of both is alignment/placement
 padding introduced by BOLT's default 2 M code alignment. Replacing it with the
 regular page size (`bolt-rewrite-nohuge`) removes the aarch64 `-rewrite`
-overhead (down to +3.4 % … +23 %). MongoDB `bolt` adds +16.5 % / +17.2 %
+overhead (down to +3.4 % … +23 %). MongoDB `bolt` adds +16.6 % / +17.3 %
 (x86_64 pie/no-pie) / +66.7 % / +69.2 % (aarch64 pie/no-pie) and `-rewrite`
 +2.1 % / +2.3 % / +3.7 % / +4.0 %. On aarch64 CPython `bolt` adds +107.1 %
 (pie) / +116.3 % (no-pie); `-rewrite` +37.8 % / +42.5 %, reduced by
@@ -128,7 +149,7 @@ retained original code dominates the deployed size; see §4.4).
 | Kernel | 6.18.33.2-microsoft-standard-WSL2 |
 | Userspace | Ubuntu 24.04 (containers), GCC 13.3.0 |
 | Harness | `bolt-harness` (same as aarch64) |
-| BOLT | `$HOME/src/llvm-project-23/build23/bin/llvm-bolt` (LLVM 23.1.1, rev `d1723d9d8a4d`) |
+| BOLT | `$HOME/src/llvm-project-23/build23/bin/llvm-bolt` (LLVM 23.1.1; x86_64 results re-validated at rev `d0a877fc33a1`, 2026-09-17) |
 | Workload generators | sysbench (MariaDB), pgbench (PostgreSQL), YCSB (MongoDB) |
 | MongoDB build | Ubuntu 24.04 container, GCC 12.4, deadsnakes Python 3.10, MongoDB 7.0 `r7.0.43` (SCons) |
 
@@ -435,6 +456,17 @@ still skips), the `bolt`, `-rewrite` and `-rewrite-nohuge` binaries for both
 modes are produced, pass `app_verify_bin`, and complete the full pyperformance
 suite with zero errors (§4.5).
 
+**x86_64.** The arch split is inverted: without `-skip-funcs` the x86_64
+*optimization* pass corrupts the computed-goto dispatch (observed at rev
+`d0a877f` as well — the optimized library segfaults on the first import,
+jumping into a wild address; same hazard class as PostgreSQL's
+`dispatch_table`, §3.3's sibling note), so `apps/python/app.sh` keeps
+`-skip-funcs` in `BOLT_OPT_FLAGS` on x86_64 and omits it only on aarch64.
+Since `d0a877f` BOLT rejects `-rewrite` combined with `-skip-funcs`
+(`BOLT-ERROR: -rewrite is incompatible with -skip-funcs/-skip-funcs-file`),
+the x86_64 `-rewrite`/`-rewrite-nohuge` variants fail fast at optimize time and
+are skipped; `bolt` is unaffected and is the only x86_64 CPython variant.
+
 Baseline binary characteristics (aarch64):
 
 | Arch | Mode | BOLT target | ELF | relocations | raw | stripped |
@@ -460,26 +492,28 @@ Geomean of per-workload ratios (baseline = 1.0000); higher is better.
 | aarch64 | MongoDB | no-pie | **+35.39 %** | **+36.05 %** | **+38.05 %** |
 | aarch64 | CPython | pie | **+19.72 %** | **+21.14 %** | **+18.32 %** |
 | aarch64 | CPython | no-pie | **+21.34 %** | **+19.77 %** | **+19.93 %** |
-| x86_64 | MariaDB | pie | **+10.27 %** | **+16.39 %** | **+22.40 %** |
-| x86_64 | MariaDB | no-pie | **+20.69 %** | **+21.46 %** | **+21.44 %** |
-| x86_64 | PostgreSQL | pie | **+7.66 %** | **+1.79 %** | **+2.46 %** |
-| x86_64 | PostgreSQL | no-pie | **+16.36 %** | **+18.31 %** | **+15.59 %** |
-| x86_64 | MongoDB | pie | **+24.35 %** | **+20.05 %** | — |
-| x86_64 | MongoDB | no-pie | **+28.89 %** | **+32.73 %** | — |
-| x86_64 | CPython | pie | **+10.2 %** | — | — |
-| x86_64 | CPython | no-pie | **+10.5 %** | — | — |
+| x86_64 | MariaDB | pie | **+16.79 %** | **+10.58 %** | **+8.93 %** |
+| x86_64 | MariaDB | no-pie | **+23.96 %** | **+22.42 %** | **+22.14 %** |
+| x86_64 | PostgreSQL | pie | **+15.65 %** | **+12.78 %** | **+9.67 %** |
+| x86_64 | PostgreSQL | no-pie | **+15.76 %** | **+14.97 %** | **+15.15 %** |
+| x86_64 | MongoDB | pie | **+17.78 %** | **+13.96 %** | **+11.05 %** |
+| x86_64 | MongoDB | no-pie | **+20.40 %** | **+15.30 %** | **+14.71 %** |
+| x86_64 | CPython | pie | **+10.02 %** | rej. | rej. |
+| x86_64 | CPython | no-pie | **+18.55 %** | rej. | rej. |
 
 On aarch64 `bolt` and `-rewrite` are within a few points of each other
 (MariaDB `pie` aside, where `bolt` leads by ~2.5 points in this session), as
 expected for a full re-emission vs. in-place patching; on x86_64 the variants
-are closer and the ordering is within run-to-run noise. `bolt-rewrite-nohuge`
+are similarly spaced, with `bolt` leading `-rewrite` by ~2–6 points in this
+session. `bolt-rewrite-nohuge`
 performs within run-to-run noise of `bolt-rewrite` on both architectures
 (aarch64 −2.8 … +2.6 points, x86_64 −2.7 … +6.0 points; it is a *size* change,
 not a reordering change). CPython's figures are `ops_per_sec` geomeans
 (pyperformance); its aarch64 results use rev `d0a877f` and now include
-`-rewrite` (§3.5), while the x86_64 `-rewrite` cells were not re-verified with
-that revision (`—`). All server-app deltas were re-measured at rev `d0a877f` in
-one four-variant session per app/mode (2026-09-17); absolute levels vary
+`-rewrite` (§3.5), while the x86_64 `-rewrite`/`-rewrite-nohuge` variants are
+rejected by BOLT (`-rewrite` with `-skip-funcs`, §3.5). All x86_64 server-app
+deltas were re-measured at rev `d0a877f` in one four-variant session per
+app/mode (2026-09-17) with fresh instrumentation; absolute levels vary
 between runs (see §5.5), but the ordering and magnitude are stable.
 
 ### 4.2 Per-workload throughput means
@@ -532,103 +566,103 @@ between runs (see §5.5), but the ordering and magnitude are stable.
 
 | workload | metric | baseline | bolt | bolt-rewrite | bolt-rewrite-nohuge |
 |---|---|---|---|---|---|
-| oltp_point_select | TPS/QPS | 144,642.86 | 159,815.47 | 164,728.80 | 173,592.94 |
-| oltp_read_write | TPS | 4,730.85 | 5,206.25 | 5,626.88 | 5,905.65 |
-| oltp_read_write | QPS | 94,616.88 | 104,125.05 | 112,537.66 | 118,113.12 |
+| oltp_point_select | TPS/QPS | 164,544.34 | 194,877.33 | 190,397.25 | 184,428.40 |
+| oltp_read_write | TPS | 5,900.37 | 6,795.93 | 6,235.45 | 6,246.39 |
+| oltp_read_write | QPS | 118,007.46 | 135,918.52 | 124,709.07 | 124,927.77 |
 
 **x86_64 — MariaDB — no-pie**
 
 | workload | metric | baseline | bolt | bolt-rewrite | bolt-rewrite-nohuge |
 |---|---|---|---|---|---|
-| oltp_point_select | TPS/QPS | 142,912.38 | 168,070.83 | 175,419.27 | 173,751.39 |
-| oltp_read_write | TPS | 4,808.81 | 5,955.72 | 5,779.43 | 5,832.80 |
-| oltp_read_write | QPS | 96,176.20 | 119,114.36 | 115,588.48 | 116,656.08 |
+| oltp_point_select | TPS/QPS | 143,140.17 | 180,356.29 | 176,625.18 | 174,548.93 |
+| oltp_read_write | TPS | 5,015.64 | 6,117.12 | 6,091.39 | 6,135.92 |
+| oltp_read_write | QPS | 100,312.80 | 122,342.38 | 121,827.75 | 122,718.47 |
 
 **x86_64 — PostgreSQL — pie**
 
 | workload | metric | baseline | bolt | bolt-rewrite | bolt-rewrite-nohuge |
 |---|---|---|---|---|---|
-| select-only | TPS | 216,330.52 | 229,745.54 | 215,829.99 | 224,034.51 |
-| tpcb-like | TPS | 32,582.77 | 35,561.69 | 33,834.67 | 33,026.34 |
+| select-only | TPS | 223,170.05 | 258,974.68 | 253,297.19 | 248,334.32 |
+| tpcb-like | TPS | 34,401.51 | 39,653.40 | 38,553.12 | 37,186.91 |
 
 **x86_64 — PostgreSQL — no-pie**
 
 | workload | metric | baseline | bolt | bolt-rewrite | bolt-rewrite-nohuge |
 |---|---|---|---|---|---|
-| select-only | TPS | 186,550.06 | 222,622.19 | 215,895.88 | 209,699.53 |
-| tpcb-like | TPS | 27,481.13 | 31,182.00 | 33,239.82 | 32,664.51 |
+| select-only | TPS | 199,594.08 | 232,125.13 | 230,133.40 | 230,636.75 |
+| tpcb-like | TPS | 31,036.63 | 35,761.91 | 35,581.23 | 35,616.28 |
 
 **x86_64 — MongoDB — pie**
 
-| workload | metric | baseline | bolt | bolt-rewrite |
-|---|---|---|---|---|
-| workloada | TPS | 36,509.89 | 45,886.50 | 43,349.49 |
-| workloadc | TPS | 50,158.29 | 61,708.09 | 60,885.32 |
+| workload | metric | baseline | bolt | bolt-rewrite | bolt-rewrite-nohuge |
+|---|---|---|---|---|---|
+| workloada | TPS | 39,430.06 | 46,672.31 | 45,285.31 | 47,297.68 |
+| workloadc | TPS | 64,115.32 | 75,140.09 | 72,503.33 | 65,909.76 |
 
 **x86_64 — MongoDB — no-pie**
 
-| workload | metric | baseline | bolt | bolt-rewrite |
-|---|---|---|---|---|
-| workloada | TPS | 32,247.78 | 41,753.12 | 44,134.14 |
-| workloadc | TPS | 52,042.13 | 66,775.41 | 66,987.86 |
+| workload | metric | baseline | bolt | bolt-rewrite | bolt-rewrite-nohuge |
+|---|---|---|---|---|---|
+| workloada | TPS | 39,179.90 | 51,731.91 | 49,946.49 | 48,946.36 |
+| workloadc | TPS | 66,616.91 | 73,138.58 | 69,469.88 | 70,168.43 |
 
-**aarch64 — CPython — pie** (`ops_per_sec`; rev `d0a877f`)
+**x86_64 — CPython — pie**
 
 | workload | metric | baseline | bolt | bolt-rewrite | bolt-rewrite-nohuge |
 |---|---|---|---|---|---|
-| pyflate | ops_per_sec | 1.72 | 1.82 | 1.82 | 1.81 |
-| scimark_sor | ops_per_sec | 5.51 | 6.08 | 6.09 | 6.05 |
-| nbody | ops_per_sec | 9.45 | 9.55 | 9.48 | 9.51 |
-| regex_v8 | ops_per_sec | 157.32 | 331.10 | 332.05 | 331.29 |
-| scimark_lu | ops_per_sec | 6.31 | 7.27 | 7.35 | 7.38 |
-| scimark_sparse_mat_mult | ops_per_sec | 2,381.30 | 5,501.38 | 5,483.05 | 5,466.92 |
-| float | ops_per_sec | 9.42 | 20.60 | 20.47 | 20.34 |
-| python_startup | ops_per_sec | 165.60 | 174.09 | 215.24 | 129.46 |
-| nqueens | ops_per_sec | 7.73 | 8.97 | 8.98 | 8.91 |
-| go | ops_per_sec | 5.92 | 6.02 | 6.07 | 6.06 |
-| richards | ops_per_sec | 34.04 | 36.08 | 36.44 | 36.38 |
-| scimark_fft | ops_per_sec | 2.26 | 2.55 | 2.55 | 2.54 |
-| fannkuch | ops_per_sec | 1.70 | 2.03 | 2.01 | 1.99 |
-| pickle | ops_per_sec | 31,365,866.67 | 33,890,600.00 | 33,953,833.33 | 34,020,633.33 |
-| spectral_norm | ops_per_sec | 6.73 | 7.56 | 7.57 | 7.56 |
-| telco | ops_per_sec | 1,351.25 | 1,582.19 | 1,577.06 | 1,569.64 |
-| unpickle_pure_python | ops_per_sec | 111,542.33 | 118,363.33 | 120,249.67 | 120,662.00 |
-| deltablue | ops_per_sec | 7,779.99 | 8,095.53 | 8,135.31 | 8,132.24 |
-| json_loads | ops_per_sec | 6,689,893.33 | 7,819,353.33 | 7,748,923.33 | 7,729,736.67 |
-| pickle_pure_python | ops_per_sec | 41,624.40 | 44,346.53 | 44,613.47 | 44,335.27 |
-| scimark_monte_carlo | ops_per_sec | 22.34 | 24.46 | 25.09 | 24.90 |
-| json_dumps | ops_per_sec | 530.65 | 614.95 | 616.91 | 616.92 |
-| hexiom | ops_per_sec | 2,152.78 | 2,278.33 | 2,289.31 | 2,289.98 |
-| regex_compile | ops_per_sec | 6.57 | 7.28 | 7.41 | 7.37 |
+| deltablue | ops_per_sec | 31,959.53 | 32,727.20 | — | — |
+| fannkuch | ops_per_sec | 3.55 | 3.94 | — | — |
+| float | ops_per_sec | 35.86 | 38.23 | — | — |
+| go | ops_per_sec | 21.69 | 22.13 | — | — |
+| hexiom | ops_per_sec | 8,010.98 | 8,521.99 | — | — |
+| json_dumps | ops_per_sec | 2,026.71 | 2,258.96 | — | — |
+| json_loads | ops_per_sec | 27,685,833.33 | 31,634,066.67 | — | — |
+| nbody | ops_per_sec | 36.18 | 36.25 | — | — |
+| nqueens | ops_per_sec | 29.55 | 32.14 | — | — |
+| pickle | ops_per_sec | 121,129,333.33 | 129,158,666.67 | — | — |
+| pickle_pure_python | ops_per_sec | 156,881.33 | 163,283.33 | — | — |
+| pyflate | ops_per_sec | 3.47 | 3.56 | — | — |
+| python_startup | ops_per_sec | 2,270.50 | 2,385.36 | — | — |
+| regex_compile | ops_per_sec | 21.77 | 23.00 | — | — |
+| regex_v8 | ops_per_sec | 599.88 | 631.68 | — | — |
+| richards | ops_per_sec | 132.36 | 137.25 | — | — |
+| scimark_fft | ops_per_sec | 4.68 | 5.16 | — | — |
+| scimark_lu | ops_per_sec | 28.18 | 33.50 | — | — |
+| scimark_monte_carlo | ops_per_sec | 95.49 | 103.03 | — | — |
+| scimark_sor | ops_per_sec | 23.65 | 24.96 | — | — |
+| scimark_sparse_mat_mult | ops_per_sec | 9,919.07 | 21,273.77 | — | — |
+| spectral_norm | ops_per_sec | 27.96 | 30.60 | — | — |
+| telco | ops_per_sec | 5,481.84 | 5,960.70 | — | — |
+| unpickle_pure_python | ops_per_sec | 457,227.33 | 470,404.33 | — | — |
 
-**aarch64 — CPython — no-pie** (`ops_per_sec`; switch-based eval loop, rev `d0a877f`)
+**x86_64 — CPython — no-pie**
 
 | workload | metric | baseline | bolt | bolt-rewrite | bolt-rewrite-nohuge |
 |---|---|---|---|---|---|
-| pyflate | ops_per_sec | 1.63 | 1.75 | 1.75 | 1.75 |
-| scimark_sor | ops_per_sec | 5.33 | 5.75 | 5.74 | 5.74 |
-| nbody | ops_per_sec | 8.20 | 8.46 | 8.42 | 8.40 |
-| regex_v8 | ops_per_sec | 146.69 | 155.06 | 155.63 | 155.40 |
-| scimark_lu | ops_per_sec | 5.64 | 6.46 | 6.56 | 6.58 |
-| scimark_sparse_mat_mult | ops_per_sec | 2,436.24 | 5,407.69 | 5,427.90 | 5,428.79 |
-| float | ops_per_sec | 9.01 | 19.98 | 19.89 | 19.96 |
-| python_startup | ops_per_sec | 129.00 | 175.81 | 130.69 | 134.89 |
-| nqueens | ops_per_sec | 7.65 | 8.98 | 8.89 | 8.83 |
-| go | ops_per_sec | 5.50 | 5.73 | 5.72 | 5.69 |
-| richards | ops_per_sec | 30.54 | 33.92 | 33.86 | 33.89 |
-| scimark_fft | ops_per_sec | 2.29 | 2.54 | 2.53 | 2.53 |
-| fannkuch | ops_per_sec | 1.68 | 1.99 | 2.00 | 2.01 |
-| pickle | ops_per_sec | 32,881,100.00 | 35,506,566.67 | 35,656,333.33 | 35,674,266.67 |
-| spectral_norm | ops_per_sec | 6.38 | 7.00 | 7.03 | 7.04 |
-| telco | ops_per_sec | 1,462.57 | 1,722.33 | 1,712.52 | 1,712.44 |
-| unpickle_pure_python | ops_per_sec | 103,266.33 | 111,886.67 | 111,306.67 | 111,463.33 |
-| deltablue | ops_per_sec | 7,204.21 | 7,844.41 | 7,841.76 | 7,845.46 |
-| json_loads | ops_per_sec | 7,430,033.33 | 8,312,620.00 | 8,313,533.33 | 8,338,073.33 |
-| pickle_pure_python | ops_per_sec | 38,480.77 | 41,465.20 | 41,339.63 | 41,304.93 |
-| scimark_monte_carlo | ops_per_sec | 21.72 | 24.23 | 24.14 | 24.18 |
-| json_dumps | ops_per_sec | 566.94 | 1,315.24 | 1,321.87 | 1,314.36 |
-| hexiom | ops_per_sec | 1,757.08 | 1,867.45 | 1,869.08 | 1,872.81 |
-| regex_compile | ops_per_sec | 5.91 | 6.50 | 6.45 | 6.45 |
+| deltablue | ops_per_sec | 33,507.40 | 35,213.07 | — | — |
+| fannkuch | ops_per_sec | 4.31 | 4.85 | — | — |
+| float | ops_per_sec | 82.67 | 93.47 | — | — |
+| go | ops_per_sec | 22.05 | 23.44 | — | — |
+| hexiom | ops_per_sec | 8,765.00 | 9,015.22 | — | — |
+| json_dumps | ops_per_sec | 2,282.63 | 5,144.57 | — | — |
+| json_loads | ops_per_sec | 30,976,133.33 | 34,811,733.33 | — | — |
+| nbody | ops_per_sec | 95.57 | 93.23 | — | — |
+| nqueens | ops_per_sec | 36.31 | 38.31 | — | — |
+| pickle | ops_per_sec | 126,742,333.33 | 135,747,666.67 | — | — |
+| pickle_pure_python | ops_per_sec | 169,215.00 | 178,173.67 | — | — |
+| pyflate | ops_per_sec | 3.69 | 3.78 | — | — |
+| python_startup | ops_per_sec | 2,378.88 | 3,392.63 | — | — |
+| regex_compile | ops_per_sec | 24.42 | 25.65 | — | — |
+| regex_v8 | ops_per_sec | 622.74 | 1,064.96 | — | — |
+| richards | ops_per_sec | 136.28 | 150.29 | — | — |
+| scimark_fft | ops_per_sec | 5.45 | 6.23 | — | — |
+| scimark_lu | ops_per_sec | 34.47 | 81.75 | — | — |
+| scimark_monte_carlo | ops_per_sec | 113.67 | 122.29 | — | — |
+| scimark_sor | ops_per_sec | 25.41 | 27.25 | — | — |
+| scimark_sparse_mat_mult | ops_per_sec | 23,511.67 | 26,630.13 | — | — |
+| spectral_norm | ops_per_sec | 34.48 | 38.52 | — | — |
+| telco | ops_per_sec | 6,450.15 | 7,229.16 | — | — |
+| unpickle_pure_python | ops_per_sec | 512,378.00 | 551,185.67 | — | — |
 
 ### 4.3 Latency (geomean vs. baseline, lower is better)
 
@@ -640,12 +674,12 @@ between runs (see §5.5), but the ordering and magnitude are stable.
 | aarch64 | PostgreSQL | no-pie | −25.28 % | −25.61 % | −25.61 % |
 | aarch64 | MongoDB | pie | −27.97 % | −27.67 % | −27.34 % |
 | aarch64 | MongoDB | no-pie | −26.20 % | −26.57 % | −27.65 % |
-| x86_64 | MariaDB | pie | −9.04 % | −14.01 % | −19.02 % |
-| x86_64 | MariaDB | no-pie | −15.70 % | −17.47 % | −17.82 % |
-| x86_64 | PostgreSQL | pie | −7.11 % | −2.09 % | −2.71 % |
-| x86_64 | PostgreSQL | no-pie | −14.15 % | −15.34 % | −13.32 % |
-| x86_64 | MongoDB | pie | −19.64 % | −15.44 % | — |
-| x86_64 | MongoDB | no-pie | −22.50 % | −23.94 % | — |
+| x86_64 | MariaDB | pie | −16.71 % | −11.24 % | −7.79 % |
+| x86_64 | MariaDB | no-pie | −18.20 % | −18.05 % | −18.36 % |
+| x86_64 | PostgreSQL | pie | −13.43 % | −11.47 % | −8.96 % |
+| x86_64 | PostgreSQL | no-pie | −13.60 % | −13.22 % | −13.25 % |
+| x86_64 | MongoDB | pie | −16.02 % | −13.12 % | −10.99 % |
+| x86_64 | MongoDB | no-pie | −16.96 % | −13.29 % | −12.90 % |
 
 Per-workload average latency (ms):
 
@@ -663,18 +697,18 @@ Per-workload average latency (ms):
 | aarch64 | MongoDB | pie | workloadc | 1.19 | 0.85 | 0.84 | 0.86 |
 | aarch64 | MongoDB | no-pie | workloada | 1.64 | 1.24 | 1.21 | 1.21 |
 | aarch64 | MongoDB | no-pie | workloadc | 1.18 | 0.85 | 0.86 | 0.84 |
-| x86_64 | MariaDB | pie | oltp_point_select | 0.11 | 0.10 | 0.10 | 0.09 |
-| x86_64 | MariaDB | pie | oltp_read_write | 3.38 | 3.07 | 2.84 | 2.71 |
-| x86_64 | MariaDB | no-pie | oltp_point_select | 0.11 | 0.10 | 0.09 | 0.09 |
-| x86_64 | MariaDB | no-pie | oltp_read_write | 3.32 | 2.69 | 2.77 | 2.74 |
-| x86_64 | PostgreSQL | pie | select-only | 0.07 | 0.07 | 0.07 | 0.07 |
-| x86_64 | PostgreSQL | pie | tpcb-like | 0.49 | 0.45 | 0.47 | 0.48 |
-| x86_64 | PostgreSQL | no-pie | select-only | 0.09 | 0.07 | 0.07 | 0.08 |
-| x86_64 | PostgreSQL | no-pie | tpcb-like | 0.58 | 0.51 | 0.48 | 0.49 |
-| x86_64 | MongoDB | pie | workloada | 0.43 | 0.34 | 0.36 | — |
-| x86_64 | MongoDB | pie | workloadc | 0.28 | 0.23 | 0.24 | — |
-| x86_64 | MongoDB | no-pie | workloada | 0.48 | 0.37 | 0.35 | — |
-| x86_64 | MongoDB | no-pie | workloadc | 0.30 | 0.24 | 0.23 | — |
+| x86_64 | MariaDB | pie | oltp_point_select | 0.10 | 0.08 | 0.08 | 0.09 |
+| x86_64 | MariaDB | pie | oltp_read_write | 2.71 | 2.35 | 2.56 | 2.56 |
+| x86_64 | MariaDB | no-pie | oltp_point_select | 0.11 | 0.09 | 0.09 | 0.09 |
+| x86_64 | MariaDB | no-pie | oltp_read_write | 3.20 | 2.62 | 2.63 | 2.61 |
+| x86_64 | PostgreSQL | pie | select-only | 0.07 | 0.06 | 0.06 | 0.06 |
+| x86_64 | PostgreSQL | pie | tpcb-like | 0.47 | 0.40 | 0.41 | 0.43 |
+| x86_64 | PostgreSQL | no-pie | select-only | 0.08 | 0.07 | 0.07 | 0.07 |
+| x86_64 | PostgreSQL | no-pie | tpcb-like | 0.52 | 0.45 | 0.45 | 0.45 |
+| x86_64 | MongoDB | pie | workloada | 0.39 | 0.32 | 0.33 | 0.33 |
+| x86_64 | MongoDB | pie | workloadc | 0.25 | 0.21 | 0.22 | 0.23 |
+| x86_64 | MongoDB | no-pie | workloada | 0.38 | 0.31 | 0.32 | 0.32 |
+| x86_64 | MongoDB | no-pie | workloadc | 0.24 | 0.20 | 0.21 | 0.21 |
 
 CPython/pyperformance reports only `ops_per_sec` (no latency metric), so it has
 no row in the latency tables.
@@ -687,16 +721,18 @@ removes them (runtime `.rela.dyn`/`.rela.plt` are kept). Comparing raw file
 sizes therefore flatters BOLT output, which no longer carries those sections,
 so all deltas below use **stripped file size**, for both architectures.
 
-**x86_64 (stripped file size)**
+**x86_64 (stripped file size; rev `d0a877f`, 2026-09-17 re-validation)**
 
 | App | Mode | baseline (bytes) | `bolt` (Δ) | `bolt-rewrite` (Δ) | `bolt-rewrite-nohuge` (Δ) |
 |---|---|---|---|---|---|
-| MariaDB | pie | 26,921,472 | 33,155,760 (**+23.2 %**) | 26,921,152 (**−0.0 %**) | 26,921,176 (**−0.0 %**) |
-| MariaDB | no-pie | 22,346,312 | 28,593,264 (**+28.0 %**) | 22,367,000 (**+0.1 %**) | 22,367,016 (**+0.1 %**) |
-| PostgreSQL | pie | 9,651,888 | 14,807,928 (**+53.4 %**) | 9,664,856 (**+0.1 %**) | 9,664,872 (**+0.1 %**) |
-| PostgreSQL | no-pie | 9,367,352 | 14,523,208 (**+55.0 %**) | 9,376,200 (**+0.1 %**) | 9,376,224 (**+0.1 %**) |
-| MongoDB | pie | 129,725,304 | 151,138,896 (**+16.5 %**) | 132,479,728 (**+2.1 %**) | — |
-| MongoDB | no-pie | 125,596,536 | 147,191,320 (**+17.2 %**) | 128,482,616 (**+2.3 %**) | — |
+| MariaDB | pie | 26,921,472 | 33,155,048 (**+23.2 %**) | 26,921,152 (**−0.0 %**) | 26,921,176 (**−0.0 %**) |
+| MariaDB | no-pie | 22,346,312 | 28,592,016 (**+28.0 %**) | 22,367,000 (**+0.1 %**) | 22,367,016 (**+0.1 %**) |
+| PostgreSQL | pie | 9,651,888 | 14,807,656 (**+53.4 %**) | 9,664,856 (**+0.1 %**) | 9,664,872 (**+0.1 %**) |
+| PostgreSQL | no-pie | 9,367,352 | 14,523,096 (**+55.0 %**) | 9,376,200 (**+0.1 %**) | 9,376,224 (**+0.1 %**) |
+| MongoDB | pie | 129,725,304 | 151,228,760 (**+16.6 %**) | 132,482,336 (**+2.1 %**) | 130,569,520 (**+0.7 %**) |
+| MongoDB | no-pie | 125,596,536 | 147,260,992 (**+17.3 %**) | 128,484,864 (**+2.3 %**) | 126,645,784 (**+0.8 %**) |
+| CPython | pie | 5,365,936 | 10,138,832 (**+89.0 %**) | rej. | rej. |
+| CPython | no-pie | 4,870,872 | 9,627,696 (**+97.7 %**) | rej. | rej. |
 
 **aarch64 (stripped file size; rev `d0a877f`, byte-identical to `d1723d9d`)**
 
@@ -892,6 +928,16 @@ on import (`SIGSEGV`, exit 139) in both modes; the two `d0a877f` fixes resolve
 this on aarch64. As noted in §3.5, aarch64 `no-pie` instrumentation additionally
 requires `PY_COMPUTED_GOTO=0`.
 
+**x86_64 (2026-09-17, rev `d0a877f`, re-instrumentation).** All twenty-six
+optimized targets that BOLT produces (4 server variants × 2 modes × 3 apps = 24,
+plus CPython `bolt` × 2 modes; CPython `-rewrite`/`-rewrite-nohuge` are rejected by
+BOLT, §3.5) pass their health check — `app_verify_bin` for CPython (staging the
+`pie` `.so` and importing `sys, pyperf, pyperformance`), `--version` for the
+servers — and every bench completed with **0 workload errors**; no `.failed`
+outputs were left behind. For the three servers this is the first x86_64
+`-rewrite` validation at the fixed revision (the earlier gap noted in previous
+revisions of this report).
+
 ---
 
 ## 5. Issues, caveats and notes
@@ -973,6 +1019,23 @@ requires `PY_COMPUTED_GOTO=0`.
     mode with `PY_COMPUTED_GOTO=0` (switch-based eval loop) avoids it. The `pie`
     target (shared libpython) profiles fine with computed gotos on. On x86_64 no
     such workaround was needed.
+12. **CPython on x86_64 needs `-skip-funcs` in the optimization pass.** With
+    `-skip-funcs` removed from `BOLT_OPT_FLAGS` (the aarch64 setting), the
+    x86_64 optimization pass corrupts the computed-goto dispatch on any
+    revision (re-confirmed at `d0a877f`: the optimized library segfaults on the
+    first import). `apps/python/app.sh` therefore applies `-skip-funcs` to
+    `BOLT_OPT_FLAGS` on x86_64 only; since `d0a877f` BOLT rejects `-rewrite`
+    with `-skip-funcs`, the x86_64 `-rewrite`/`-rewrite-nohuge` variants fail
+    fast with `BOLT-ERROR` and the pipeline skips them — CPython x86_64 is
+    `bolt`-only by construction.
+13. **`optimize.sh` verification under `set -e`.** `run_bolt` runs with `set -e`
+    active when invoked as a plain command (the required `bolt` variant), so a
+    failing health check used to exit the script one command before `rc=$?`
+    could capture it — silently, with no diagnostic. The verification call now
+    uses `|| rc=$?` so the existing required/optional handling (`die` vs.
+    warn + `.failed`) always runs. Found during the 2026-09-17 x86_64
+    re-validation when the first CPython `bolt` output failed its import smoke
+    test (issue 12).
 
 ---
 
@@ -1033,7 +1096,9 @@ LLVM_SRC=$HOME/src/llvm-23.1.1 ./rebuild.sh exec env NOHUGE=1 PY_COMPUTED_GOTO=0
   BOLT_INSTRUMENT_EXTRA_FLAGS="--drop-cortex-a53-843419-veneers" \
   BOLT_OPT_FLAGS="<BOLT_FLAGS> --drop-cortex-a53-843419-veneers" \
   bash -c 'SKIP_BUILD=1 /harness/pipeline/run-all.sh pie no-pie'
-# `-skip-funcs` is applied to instrumentation only (app.sh); -rewrite rejects it.
+# `-skip-funcs` is applied to instrumentation only on aarch64 (app.sh), where
+#   -rewrite then works; on x86_64 app.sh keeps it in the optimization pass and
+#   BOLT rejects -rewrite (CPython x86_64 is bolt-only).
 # x86_64: omit the veneer flag and PY_COMPUTED_GOTO=0
 ```
 

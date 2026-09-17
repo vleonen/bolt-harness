@@ -36,7 +36,7 @@ DATA="$PROFILES/$MODE/profile.merged.fdata"
 # skipped by run-all.sh and shows up as "n/a" in compare.sh.
 run_bolt() {
   local variant="$1" required="$2"; shift 2
-  local out verify_log rc
+  local out verify_log rc=0
   out="$(which_binary "$MODE" "$variant")"
   local log="$BINARIES/$MODE/bolt-$variant.log"
   verify_log="$BINARIES/$MODE/bolt-$variant.verify.log"
@@ -63,13 +63,16 @@ run_bolt() {
   # for targets that are not directly executable (e.g. a shared library); the
   # hook owns its own timeout. Either way stderr and the exit status are
   # captured so a failing variant leaves forensics.
+  # rc is captured via `|| rc=$?` so a failing verification cannot trip the
+  # caller's `set -e`: run_bolt runs under set -e when invoked as a plain
+  # command (the required `bolt` variant), and dying here would skip the
+  # diagnostic branches below entirely.
   if declare -F app_verify_bin >/dev/null 2>&1; then
-    app_verify_bin "$MODE" "$variant" "$out" > /dev/null 2> "$verify_log"
+    app_verify_bin "$MODE" "$variant" "$out" > /dev/null 2> "$verify_log" || rc=$?
   else
     timeout "${BOLT_VERIFY_TIMEOUT:-30}" "$out" --version \
-      > /dev/null 2> "$verify_log"
+      > /dev/null 2> "$verify_log" || rc=$?
   fi
-  rc=$?
   if [ $rc -ne 0 ]; then
     if [ "$required" = 1 ]; then
       tail -20 "$verify_log" >&2
