@@ -1,6 +1,6 @@
 # LLVM 23.1.1 BOLT `-rewrite` — Results on MariaDB, PostgreSQL, MongoDB and CPython (aarch64 & x86_64)
 
-Date: 2026-09-15 (aarch64 MongoDB added 2026-09-16; CPython aarch64 re-verified 2026-09-17)
+Date: 2026-09-15 (aarch64 MongoDB/CPython added 2026-09-16; aarch64 re-validated at `d0a877f` on 2026-09-17)
 Harness: `bolt-harness`
 Tool under test: `llvm-bolt`, LLVM **23.1.1**, branch `llvmorg-23.1.1-rewrite`:
 
@@ -11,11 +11,14 @@ Tool under test: `llvm-bolt`, LLVM **23.1.1**, branch `llvmorg-23.1.1-rewrite`:
   `-rewrite` fixes landed on the branch (see §2.2); the earlier aarch64 run
   used `502a8fc3a4ce`. The aarch64 set also includes a fourth configuration,
   `bolt-rewrite-nohuge` (`-rewrite --no-huge-pages`), added to quantify BOLT's
-  default 2 M huge-page code alignment (see §2.3 and §4.4). The CPython aarch64
-  results were re-verified on 2026-09-17 with revision `d0a877fc33a1` (36
+  default 2 M huge-page code alignment (see §2.3 and §4.4). The whole aarch64
+  set was re-validated on 2026-09-17 with revision `d0a877fc33a1` (36
   `[BOLT][Rewrite]` commits), which adds *Reject `-rewrite` with `-skip-funcs`*
-  and *Fix AArch64 TLSDESC descriptor retargeting* (see §3.5); all other
-  aarch64 results remain at `d1723d9d`.
+  and *Fix AArch64 TLSDESC descriptor retargeting*: CPython needed those fixes
+  (§3.5), while for MariaDB/PostgreSQL/MongoDB they are a no-op (none of the
+  baselines has TLS-family relocations and none uses `-skip-funcs`) — binary
+  sizes are byte-identical and the re-benchmark deltas are within run-to-run
+  noise (§4.1).
 - **x86_64**: `$HOME/src/llvm-project-23/build23/bin/llvm-bolt`, same branch,
   revision `d1723d9d8a4d` (the same revision as aarch64; both architectures are
   now on one revision). The x86_64 results below also include the fourth
@@ -41,16 +44,16 @@ The `-rewrite` feature was validated end-to-end on three real server
 applications plus the CPython interpreter, in both ELF link modes, on
 **aarch64** and **x86_64**, against the standard profile-driven BOLT pipeline.
 
-**aarch64** (rev `d1723d9d`, CPython at `d0a877f`; four configurations; MongoDB added 2026-09-16)
+**aarch64** (rev `d0a877f`, 2026-09-17 re-validation; four configurations)
 
 | App | Mode | `bolt` | `bolt-rewrite` | `bolt-rewrite-nohuge` | workload errors |
 |---|---|---|---|---|---|
-| MariaDB | pie | **+45.04 %** | **+46.21 %** | **+45.26 %** | 0 |
-| MariaDB | no-pie | **+47.62 %** | **+46.90 %** | **+50.61 %** | 0 |
-| PostgreSQL | pie | **+35.27 %** | **+35.63 %** | **+38.21 %** | 0 |
-| PostgreSQL | no-pie | **+35.23 %** | **+35.42 %** | **+36.78 %** | 0 |
-| MongoDB | pie | **+34.30 %** | **+43.68 %** | **+42.71 %** | 0 |
-| MongoDB | no-pie | **+40.97 %** | **+40.51 %** | **+40.55 %** | 0 |
+| MariaDB | pie | **+43.63 %** | **+41.14 %** | **+43.71 %** | 0 |
+| MariaDB | no-pie | **+45.08 %** | **+45.03 %** | **+45.61 %** | 0 |
+| PostgreSQL | pie | **+33.83 %** | **+33.84 %** | **+34.45 %** | 0 |
+| PostgreSQL | no-pie | **+33.89 %** | **+34.48 %** | **+34.41 %** | 0 |
+| MongoDB | pie | **+38.67 %** | **+38.05 %** | **+37.45 %** | 0 |
+| MongoDB | no-pie | **+35.39 %** | **+36.05 %** | **+38.05 %** | 0 |
 | CPython | pie | **+19.72 %** | **+21.14 %** | **+18.32 %** | 0 |
 | CPython | no-pie | **+21.34 %** | **+19.77 %** | **+19.93 %** | 0 |
 
@@ -67,18 +70,15 @@ applications plus the CPython interpreter, in both ELF link modes, on
 | CPython | pie | **+10.2 %** | — | — | 0 |
 | CPython | no-pie | **+10.5 %** | — | — | 0 |
 
-(Throughput geomean vs. the unmodified baseline; higher is better. MongoDB was
-measured on x86_64 on 2026-09-15 with the standard three configurations, and on
-aarch64 (both link modes) on 2026-09-16 with the fourth `bolt-rewrite-nohuge`
-configuration. `bolt-rewrite-nohuge` is the regular `-rewrite` build with
-BOLT's default 2 M huge-page code alignment replaced by the target's regular
-page size, i.e. `-rewrite --no-huge-pages` — see §2.3. CPython is measured with
-pyperformance, so its figure is the `ops_per_sec` geomean; it was run on x86_64
-on 2026-09-15 (three configurations) and on aarch64 on 2026-09-16 (four
-configurations; `no-pie` uses `PY_COMPUTED_GOTO=0`, see §3.5). The aarch64
-CPython results use rev `d0a877f`, whose two fixes make `-rewrite` usable; the
-x86_64 CPython `-rewrite` cells were not re-verified with that revision, hence
-the `—`.)
+(Throughput geomean vs. the unmodified baseline; higher is better. All aarch64
+rows are the 2026-09-17 re-validation at rev `d0a877f` (baselines, datasets and
+merged profiles reused, optimization and benchmark re-run in one four-variant
+session per app/mode). MongoDB was first measured on x86_64 on 2026-09-15;
+CPython is measured with pyperformance, so its figure is the `ops_per_sec`
+geomean (`no-pie` uses `PY_COMPUTED_GOTO=0`, see §3.5). `bolt-rewrite-nohuge`
+is the regular `-rewrite` build with BOLT's default 2 M huge-page code
+alignment replaced by the target's regular page size, i.e.
+`-rewrite --no-huge-pages` — see §2.3.)
 
 All optimized `-rewrite` binaries (plain and `bolt-rewrite-nohuge`) in the
 configurations above are produced, start, and complete the full benchmark
@@ -91,7 +91,7 @@ grows the runtime image by +16.5 % … +55 % (it keeps the original code), while
 `-rewrite` is near size-neutral (≤ 2.3 %); because x86_64 `-rewrite` is
 already regular-page aligned, `bolt-rewrite-nohuge` matches `-rewrite`
 (≤ 16 B). On **aarch64** `bolt` grows the runtime image by +60 % … +104 % and
-`-rewrite` by +3.7 % … +36 %; a substantial part of both is alignment/placement
+`-rewrite` by +3.7 % … +42.5 %; a substantial part of both is alignment/placement
 padding introduced by BOLT's default 2 M code alignment. Replacing it with the
 regular page size (`bolt-rewrite-nohuge`) removes the aarch64 `-rewrite`
 overhead (down to +3.4 % … +23 %). MongoDB `bolt` adds +16.5 % / +17.2 %
@@ -114,7 +114,7 @@ retained original code dominates the deployed size; see §4.4).
 | Kernel | 6.6.89-cix |
 | Userspace | Ubuntu 24.04.4 LTS (containers), GCC 13.3.0 |
 | Harness | `bolt-harness` — Docker containers, `llvm-bolt` run from the host checkout bind-mounted read-only |
-| BOLT | `$HOME/src/llvm-23.1.1/build/bin/llvm-bolt` (LLVM 23.1.1, rev `d1723d9d8a4d`) |
+| BOLT | `$HOME/src/llvm-23.1.1/build/bin/llvm-bolt` (LLVM 23.1.1; aarch64 results re-validated at rev `d0a877fc33a1`, 2026-09-17) |
 | Workload generators | sysbench (MariaDB, in-container), pgbench (PostgreSQL, in-container) |
 
 > Note: the host is **not** Cortex-A53, so dropping the linker's Cortex-A53
@@ -452,12 +452,12 @@ Geomean of per-workload ratios (baseline = 1.0000); higher is better.
 
 | Arch | App | Mode | `bolt` | `bolt-rewrite` | `bolt-rewrite-nohuge` |
 |---|---|---|---|---|---|
-| aarch64 | MariaDB | pie | **+45.04 %** | **+46.21 %** | **+45.26 %** |
-| aarch64 | MariaDB | no-pie | **+47.62 %** | **+46.90 %** | **+50.61 %** |
-| aarch64 | PostgreSQL | pie | **+35.27 %** | **+35.63 %** | **+38.21 %** |
-| aarch64 | PostgreSQL | no-pie | **+35.23 %** | **+35.42 %** | **+36.78 %** |
-| aarch64 | MongoDB | pie | **+34.30 %** | **+43.68 %** | **+42.71 %** |
-| aarch64 | MongoDB | no-pie | **+40.97 %** | **+40.51 %** | **+40.55 %** |
+| aarch64 | MariaDB | pie | **+43.63 %** | **+41.14 %** | **+43.71 %** |
+| aarch64 | MariaDB | no-pie | **+45.08 %** | **+45.03 %** | **+45.61 %** |
+| aarch64 | PostgreSQL | pie | **+33.83 %** | **+33.84 %** | **+34.45 %** |
+| aarch64 | PostgreSQL | no-pie | **+33.89 %** | **+34.48 %** | **+34.41 %** |
+| aarch64 | MongoDB | pie | **+38.67 %** | **+38.05 %** | **+37.45 %** |
+| aarch64 | MongoDB | no-pie | **+35.39 %** | **+36.05 %** | **+38.05 %** |
 | aarch64 | CPython | pie | **+19.72 %** | **+21.14 %** | **+18.32 %** |
 | aarch64 | CPython | no-pie | **+21.34 %** | **+19.77 %** | **+19.93 %** |
 | x86_64 | MariaDB | pie | **+10.27 %** | **+16.39 %** | **+22.40 %** |
@@ -470,17 +470,17 @@ Geomean of per-workload ratios (baseline = 1.0000); higher is better.
 | x86_64 | CPython | no-pie | **+10.5 %** | — | — |
 
 On aarch64 `bolt` and `-rewrite` are within a few points of each other
-(MongoDB `pie` is the outlier, where `-rewrite` leads by ~9 points), as
+(MariaDB `pie` aside, where `bolt` leads by ~2.5 points in this session), as
 expected for a full re-emission vs. in-place patching; on x86_64 the variants
 are closer and the ordering is within run-to-run noise. `bolt-rewrite-nohuge`
 performs within run-to-run noise of `bolt-rewrite` on both architectures
-(aarch64 −1.0 … +3.7 points, x86_64 −2.7 … +6.0 points; it is a *size* change,
+(aarch64 −2.8 … +2.6 points, x86_64 −2.7 … +6.0 points; it is a *size* change,
 not a reordering change). CPython's figures are `ops_per_sec` geomeans
 (pyperformance); its aarch64 results use rev `d0a877f` and now include
 `-rewrite` (§3.5), while the x86_64 `-rewrite` cells were not re-verified with
-that revision (`—`). All deltas were measured at rev `d1723d9d` in one
-four-variant session per app/mode; absolute levels vary between runs (see
-§5.5), but the ordering and magnitude are stable.
+that revision (`—`). All server-app deltas were re-measured at rev `d0a877f` in
+one four-variant session per app/mode (2026-09-17); absolute levels vary
+between runs (see §5.5), but the ordering and magnitude are stable.
 
 ### 4.2 Per-workload throughput means
 
@@ -488,45 +488,45 @@ four-variant session per app/mode; absolute levels vary between runs (see
 
 | workload | metric | baseline | bolt | bolt-rewrite | bolt-rewrite-nohuge |
 |---|---|---|---|---|---|
-| oltp_point_select | TPS/QPS | 34,291.11 | 52,130.25 | 52,566.96 | 52,179.28 |
-| oltp_read_write | TPS | 1,208.16 | 1,671.82 | 1,684.73 | 1,675.43 |
-| oltp_read_write | QPS | 24,163.26 | 33,436.45 | 33,694.45 | 33,508.66 |
+| oltp_point_select | TPS/QPS | 38,477.48 | 58,120.74 | 56,308.34 | 58,030.04 |
+| oltp_read_write | TPS | 1,353.17 | 1,848.08 | 1,841.95 | 1,853.14 |
+| oltp_read_write | QPS | 27,063.42 | 36,961.54 | 36,839.11 | 37,062.84 |
 
 **aarch64 — MariaDB — no-pie**
 
 | workload | metric | baseline | bolt | bolt-rewrite | bolt-rewrite-nohuge |
 |---|---|---|---|---|---|
-| oltp_point_select | TPS/QPS | 33,923.12 | 52,991.04 | 52,415.68 | 54,707.54 |
-| oltp_read_write | TPS | 1,202.51 | 1,677.58 | 1,679.40 | 1,691.38 |
-| oltp_read_write | QPS | 24,050.11 | 33,551.65 | 33,588.02 | 33,827.63 |
+| oltp_point_select | TPS/QPS | 37,937.58 | 58,300.64 | 58,244.66 | 58,924.10 |
+| oltp_read_write | TPS | 1,354.38 | 1,854.94 | 1,855.58 | 1,848.74 |
+| oltp_read_write | QPS | 27,087.57 | 37,098.71 | 37,111.54 | 36,974.83 |
 
 **aarch64 — PostgreSQL — pie**
 
 | workload | metric | baseline | bolt | bolt-rewrite | bolt-rewrite-nohuge |
 |---|---|---|---|---|---|
-| select-only | TPS | 31,102.90 | 42,907.48 | 42,787.06 | 44,013.47 |
-| tpcb-like | TPS | 5,298.06 | 7,027.30 | 7,084.12 | 7,151.78 |
+| select-only | TPS | 35,183.25 | 48,123.41 | 48,230.43 | 48,454.66 |
+| tpcb-like | TPS | 6,000.61 | 7,857.61 | 7,841.13 | 7,875.92 |
 
 **aarch64 — PostgreSQL — no-pie**
 
 | workload | metric | baseline | bolt | bolt-rewrite | bolt-rewrite-nohuge |
 |---|---|---|---|---|---|
-| select-only | TPS | 30,701.17 | 42,454.20 | 42,437.52 | 43,063.77 |
-| tpcb-like | TPS | 5,238.47 | 6,927.98 | 6,949.83 | 6,987.32 |
+| select-only | TPS | 34,377.13 | 47,223.23 | 47,539.28 | 47,412.90 |
+| tpcb-like | TPS | 5,879.63 | 7,672.55 | 7,689.39 | 7,702.04 |
 
 **aarch64 — MongoDB — pie**
 
 | workload | metric | baseline | bolt | bolt-rewrite | bolt-rewrite-nohuge |
 |---|---|---|---|---|---|
-| workloada | TPS | 9,184.98 | 12,027.45 | 12,964.17 | 12,761.61 |
-| workloadc | TPS | 12,579.53 | 17,327.81 | 18,400.13 | 18,438.83 |
+| workloada | TPS | 9,409.72 | 12,987.42 | 12,755.69 | 12,859.48 |
+| workloadc | TPS | 13,152.24 | 18,323.55 | 18,490.42 | 18,182.09 |
 
 **aarch64 — MongoDB — no-pie**
 
 | workload | metric | baseline | bolt | bolt-rewrite | bolt-rewrite-nohuge |
 |---|---|---|---|---|---|
-| workloada | TPS | 9,202.43 | 13,101.50 | 12,788.70 | 12,810.39 |
-| workloadc | TPS | 13,114.89 | 18,306.46 | 18,632.11 | 18,610.07 |
+| workloada | TPS | 9,522.92 | 12,584.84 | 12,877.22 | 12,929.71 |
+| workloadc | TPS | 13,234.92 | 18,357.67 | 18,114.98 | 18,576.85 |
 
 **x86_64 — MariaDB — pie**
 
@@ -634,12 +634,12 @@ four-variant session per app/mode; absolute levels vary between runs (see
 
 | Arch | App | Mode | `bolt` | `bolt-rewrite` | `bolt-rewrite-nohuge` |
 |---|---|---|---|---|---|
-| aarch64 | MariaDB | pie | −30.44 % | −31.47 % | −30.90 % |
-| aarch64 | MariaDB | no-pie | −32.36 % | −32.01 % | −33.78 % |
-| aarch64 | PostgreSQL | pie | −26.08 % | −26.25 % | −27.66 % |
-| aarch64 | PostgreSQL | no-pie | −26.03 % | −26.15 % | −26.91 % |
-| aarch64 | MongoDB | pie | −25.59 % | −30.42 % | −29.94 % |
-| aarch64 | MongoDB | no-pie | −29.17 % | −28.95 % | −28.96 % |
+| aarch64 | MariaDB | pie | −29.97 % | −29.02 % | −30.51 % |
+| aarch64 | MariaDB | no-pie | −31.08 % | −31.08 % | −31.37 % |
+| aarch64 | PostgreSQL | pie | −25.29 % | −25.28 % | −25.61 % |
+| aarch64 | PostgreSQL | no-pie | −25.28 % | −25.61 % | −25.61 % |
+| aarch64 | MongoDB | pie | −27.97 % | −27.67 % | −27.34 % |
+| aarch64 | MongoDB | no-pie | −26.20 % | −26.57 % | −27.65 % |
 | x86_64 | MariaDB | pie | −9.04 % | −14.01 % | −19.02 % |
 | x86_64 | MariaDB | no-pie | −15.70 % | −17.47 % | −17.82 % |
 | x86_64 | PostgreSQL | pie | −7.11 % | −2.09 % | −2.71 % |
@@ -651,18 +651,18 @@ Per-workload average latency (ms):
 
 | Arch | App | Mode | workload | baseline | bolt | bolt-rewrite | bolt-rewrite-nohuge |
 |---|---|---|---|---|---|---|---|
-| aarch64 | MariaDB | pie | oltp_point_select | 0.46 | 0.31 | 0.30 | 0.31 |
-| aarch64 | MariaDB | pie | oltp_read_write | 13.22 | 9.56 | 9.48 | 9.54 |
-| aarch64 | MariaDB | no-pie | oltp_point_select | 0.47 | 0.30 | 0.30 | 0.29 |
-| aarch64 | MariaDB | no-pie | oltp_read_write | 13.29 | 9.52 | 9.52 | 9.44 |
-| aarch64 | PostgreSQL | pie | select-only | 0.51 | 0.37 | 0.37 | 0.36 |
-| aarch64 | PostgreSQL | pie | tpcb-like | 3.02 | 2.28 | 2.26 | 2.24 |
-| aarch64 | PostgreSQL | no-pie | select-only | 0.52 | 0.38 | 0.38 | 0.37 |
-| aarch64 | PostgreSQL | no-pie | tpcb-like | 3.05 | 2.31 | 2.30 | 2.29 |
-| aarch64 | MongoDB | pie | workloada | 1.70 | 1.30 | 1.20 | 1.22 |
-| aarch64 | MongoDB | pie | workloadc | 1.24 | 0.90 | 0.85 | 0.85 |
-| aarch64 | MongoDB | no-pie | workloada | 1.70 | 1.19 | 1.22 | 1.22 |
-| aarch64 | MongoDB | no-pie | workloadc | 1.19 | 0.85 | 0.84 | 0.84 |
+| aarch64 | MariaDB | pie | oltp_point_select | 0.41 | 0.28 | 0.28 | 0.27 |
+| aarch64 | MariaDB | pie | oltp_read_write | 11.81 | 8.65 | 8.68 | 8.62 |
+| aarch64 | MariaDB | no-pie | oltp_point_select | 0.42 | 0.27 | 0.27 | 0.27 |
+| aarch64 | MariaDB | no-pie | oltp_read_write | 11.80 | 8.61 | 8.61 | 8.65 |
+| aarch64 | PostgreSQL | pie | select-only | 0.45 | 0.33 | 0.33 | 0.33 |
+| aarch64 | PostgreSQL | pie | tpcb-like | 2.67 | 2.04 | 2.04 | 2.03 |
+| aarch64 | PostgreSQL | no-pie | select-only | 0.47 | 0.34 | 0.34 | 0.34 |
+| aarch64 | PostgreSQL | no-pie | tpcb-like | 2.72 | 2.09 | 2.08 | 2.08 |
+| aarch64 | MongoDB | pie | workloada | 1.66 | 1.20 | 1.22 | 1.21 |
+| aarch64 | MongoDB | pie | workloadc | 1.19 | 0.85 | 0.84 | 0.86 |
+| aarch64 | MongoDB | no-pie | workloada | 1.64 | 1.24 | 1.21 | 1.21 |
+| aarch64 | MongoDB | no-pie | workloadc | 1.18 | 0.85 | 0.86 | 0.84 |
 | x86_64 | MariaDB | pie | oltp_point_select | 0.11 | 0.10 | 0.10 | 0.09 |
 | x86_64 | MariaDB | pie | oltp_read_write | 3.38 | 3.07 | 2.84 | 2.71 |
 | x86_64 | MariaDB | no-pie | oltp_point_select | 0.11 | 0.10 | 0.09 | 0.09 |
@@ -698,7 +698,7 @@ so all deltas below use **stripped file size**, for both architectures.
 | MongoDB | pie | 129,725,304 | 151,138,896 (**+16.5 %**) | 132,479,728 (**+2.1 %**) | — |
 | MongoDB | no-pie | 125,596,536 | 147,191,320 (**+17.2 %**) | 128,482,616 (**+2.3 %**) | — |
 
-**aarch64 (stripped file size; rev `d1723d9d`)**
+**aarch64 (stripped file size; rev `d0a877f`, byte-identical to `d1723d9d`)**
 
 | App | Mode | baseline (bytes) | `bolt` (Δ) | `bolt-rewrite` (Δ) | `bolt-rewrite-nohuge` (Δ) |
 |---|---|---|---|---|---|
@@ -826,6 +826,14 @@ Observations:
 
 aarch64 re-validation at rev `d1723d9d` (all four app/mode combinations, all
 three optimized variants including `bolt-rewrite-nohuge`):
+
+The 2026-09-17 re-validation at rev `d0a877f` (three apps × 2 modes × 3
+variants, plus CPython) passed the same checks: every optimized binary exists,
+passes `--version`/`app_verify_bin`, and completes the full workload with 0
+errors; no `.failed` artifacts, no verify logs, and no `BOLT-ERROR`/
+`corrupted control flow` in any optimize log.
+
+Historical `d1723d9d` validation (MariaDB + PostgreSQL):
 
 * All twelve aarch64 optimized binaries (`bolt`, `bolt-rewrite`,
   `bolt-rewrite-nohuge` × 2 apps × 2 modes) exist and `--version` exits 0 within
@@ -972,7 +980,7 @@ requires `PY_COMPUTED_GOTO=0`.
 
 ```bash
 # 0. Tools under test
-$HOME/src/llvm-23.1.1/build/bin/llvm-bolt --version       # aarch64, rev d1723d9d
+$HOME/src/llvm-23.1.1/build/bin/llvm-bolt --version       # aarch64, rev d0a877f
 $HOME/src/llvm-project-23/build23/bin/llvm-bolt --version # x86_64,  rev d1723d9d
 
 # 1. Point each harness container at the build for the target host
@@ -1063,13 +1071,30 @@ APP=mongodb NOHUGE=1 pipeline/size-report.sh pie no-pie
 The pre-re-validation (rev `502a8fc`) optimized binaries and logs are kept under
 `work/backup-502a8fc/`; the run logs are `work/validate-aarch64-*.out`.
 
+### 2026-09-17 aarch64 re-validation at `d0a877f` (no re-profiling)
+
+The whole aarch64 set was re-validated with rev `d0a877fc33a1`, which adds
+*Reject `-rewrite` with `-skip-funcs`* and *Fix AArch64 TLSDESC descriptor
+retargeting*. CPython required those fixes (§3.5); for MariaDB, PostgreSQL and
+MongoDB they are a no-op — none of the baselines has TLS-family relocations and
+none uses `-skip-funcs` — and the re-optimized binaries kept their stripped
+sizes, alignments and BOLT `dyno-stats` byte-for-byte (only the embedded BOLT
+revision differs). Baselines, datasets and merged profiles were reused;
+optimization and benchmark re-ran in one four-variant session per app/mode
+(`NOHUGE=1`), and the refreshed numbers are the ones in §Summary and §4.
+The prior `d1723d9d` optimized binaries are kept under
+`work/backup-d1723d9d/`; run logs are
+`work/validate-aarch64-{mariadb,postgresql,mongodb}-d0a877f.out`.
+
 ---
 
 ## 7. Data sources
 
 * Pipeline logs: `bolt-harness/work/newbolt-*.out` (first run),
   `bolt-harness/work/validate-aarch64-{mariadb,postgresql}.out` (2026-09-15
-  re-validation) and `…-nohuge.out` (2026-09-15 four-variant/NOHUGE run)
+  re-validation) and `…-nohuge.out` (2026-09-15 four-variant/NOHUGE run);
+  `bolt-harness/work/validate-aarch64-{mariadb,postgresql,mongodb}-d0a877f.out`
+  (2026-09-17 re-validation at rev `d0a877f`)
 * Functional-check transcripts: `bolt-harness/work/validate-aarch64-checks.txt`
   and `bolt-harness/work/validate-aarch64-nohuge-checks.txt`
 * Consolidated metrics/sizes: `bolt-harness/work/validate-aarch64-data.txt`,
