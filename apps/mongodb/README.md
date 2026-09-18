@@ -216,10 +216,13 @@ YCSB will look up keys that were never inserted.
   dump holds the complete profile. The workload must run longer than the dump
   interval; `profile.sh` enforces this.
 
-`pipeline/profile-exit.sh` is the complementary variant (dump at process
-exit only, liveness/crash checks included). MongoDB is the slowest app to
-instrument; leave `PROFILE_EXIT_VALIDATE_BOLT` off unless a full BOLT parse
-of the merged profile is explicitly wanted.
+`pipeline/profile-exit.sh` is **not applicable** to MongoDB: mongod
+terminates via `quickExit()` (`_exit()`), which bypasses the DT_FINI hook
+where BOLT's runtime writes the at-exit profile, so no exit dump can be
+produced regardless of flags (root-caused 2026-09-18; see §8.2 of
+`LLVM-23.1.1-bolt-rewrite-results.md`). Use the periodic-dump
+`profile.sh` for MongoDB. Also note `llvm-bolt -instrument` on mongod
+peaks at ~16 GB RSS — it needs a correspondingly large host.
 - **`-rewrite` is experimental**; a failure is non-fatal and the variant is
   skipped (`optimize.sh`).
 - Only the `mongod` server binary is optimized; mongosh/YCSB are clients.

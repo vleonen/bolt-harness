@@ -1036,13 +1036,20 @@ revisions of this report).
     warn + `.failed`) always runs. Found during the 2026-09-17 x86_64
     re-validation when the first CPython `bolt` output failed its import smoke
     test (issue 12).
-14. **MongoDB: `-instrument` without periodic-dump flags fails on x86_64
-    (open).** Instrumenting mongod for dump-at-finalization profiling (no
-    `-instrumentation-sleep-time`, no `-instrumentation-no-counters-clear`,
-    plus `-instrumentation-file-append-pid`) exits non-zero on both link modes
-    right before the build-id patch message, with no error text and no output
-    binary. The periodic-dump instrumentation of the same binary still works.
-    Details, repro and artifacts: §8. To be investigated separately.
+14. **MongoDB: dump-at-finalization profiling is not applicable (root-caused
+    2026-09-18).** Two independent causes, in sequence:
+    (a) `llvm-bolt -instrument` on mongod peaks at ~15.5-16.3 GB RSS and was
+    OOM-killed on the 15 GB host (silent SIGKILL, no error text, log ends
+    right after `clear procedure is ...`, where the ~177 MB instrumentation
+    tables are materialized); fixed by raising the WSL VM to 20 GB.
+    (b) With instrumentation succeeding, mongod still produces **no** exit
+    dump: mongod terminates via `quickExit()` (`_exit()`) in
+    `logAndQuickExit_inlock()` (`src/mongo/util/exit.cpp`, right after the
+    `Shutting down ... exitCode: 0` log line), which bypasses `_dl_fini`/the
+    DT_FINI hook where BOLT's runtime writes the at-exit profile. The
+    instrumented binary is correct (DT_FINI verified to point at
+    `__bolt_instr_fini`). Inherent mongod behavior - use the periodic-dump
+    `profile.sh` for MongoDB. Details: §8.2.
 
 ---
 
@@ -1227,50 +1234,58 @@ containers, `llvm-bolt` from `/llvm/build23` (branch
 | MariaDB | PASS — 1 exit dump, merged 5.1 MB | PASS — 1 exit dump, merged 5.2 MB; a second run with `PROFILE_EXIT_VALIDATE_BOLT=1` additionally parsed the merged profile with `llvm-bolt -data=` cleanly |
 | PostgreSQL | PASS — 41 exit dumps (postmaster + forked backends), merged 1.7 MB | PASS — 41 exit dumps, merged 1.7 MB |
 | CPython | PASS — 26 exit dumps (forked pyperf workers), merged 2.8 MB | PASS — 26 exit dumps, merged 2.8 MB |
-| MongoDB | **FAIL** — `llvm-bolt -instrument` exits non-zero; no instrumented binary | **FAIL** — same |
+| MongoDB | **N/A (root-caused)** — instrument OK after RAM raise (peak 15.8 GB), clean shutdown, but no exit dump: mongod exits via `quickExit` | **N/A (root-caused)** — same (peak 16.3 GB) |
 
 CPython ran with `PYTHON_BENCH_TESTS=regex_v8,nbody` (subset; its workload is
 pyperf-driven, not wall-clock-bounded). All PASSing combos satisfied every
 check: server liveness through the workload, clean exit after shutdown, no
 crash markers in the server log, stable `.fdata` exit dumps, successful merge.
 
-### 8.2 MongoDB failure — details for follow-up investigation (issue 5.14)
+### 8.2 MongoDB — investigation result (2026-09-18, root-caused)
 
-* **Commands** (both failed identically):
-  ```
-  docker exec bolt-harness-mongodb bash -c 'export APP=mongodb HARNESS_WORK=/work \
-    BOLT_BIN_DIR=/llvm/build23/bin CC=gcc-12 CXX=g++-12 \
-    MONGODB_PYTHON=/work/mongodb/venv/bin/python3 YCSB_DIR=/work/ycsb; \
-    /harness/pipeline/profile-exit.sh pie'    # and no-pie
-  ```
-* **Symptom**: the script dies with `ERROR: BOLT instrumentation failed`;
-  `mongod.instr-exit` is not produced. `instrument-exit.log` (77 lines, full
-  stdout+stderr) ends at
-  `BOLT-INFO: clear procedure is 0x14604060` (pie; `0x1462e060` no-pie) —
-  i.e. `llvm-bolt` exits non-zero with **no error message** right before the
-  stage that prints `BOLT-INFO: patched build-id (flipped last bit)` in the
-  successful run. Instrumentation stats (3.66 M counters, 177 MB descriptors)
-  are all printed before the failure, and 14 GB of the 15 GB host RAM was
-  available, so a late-stage OOM kill is unlikely.
-* **Reference success**: the periodic-dump instrumentation of the *same*
-  binaries on the same host/container (2026-09-17, `instrument.log`, 86 lines)
-  completes those final lines (`patched build-id`, `_end`, runtime
-  `DT_FINI`/entry-point hooking) and produced `mongod.instr`. Both runs used
-  `--no-threads` (appended by `apps/mongodb/app.sh` to
-  `BOLT_INSTRUMENT_EXTRA_FLAGS`).
-* **Flag deltas failing vs succeeding invocation**: failing omits
-  `-instrumentation-sleep-time=10` and `-instrumentation-no-counters-clear`,
-  and adds `-instrumentation-file-append-pid`. The stop point is the post-emit
-  metadata finalization (build-id patch) — note the earlier observation that
-  `-rewrite` output build-id handling was also suspect, possibly related.
-  Narrowing which of the three flag deltas triggers it (e.g. re-run
-  instrument with `-instrumentation-file-append-pid` added to the periodic
-  flag set) and capturing `llvm-bolt`'s exit code / signal (`echo $?`,
-  `dmesg`) are the suggested first steps.
-* **Artifacts**:
-  `…/_state/mongodb/profiles/{pie,no-pie}/instrument-exit.log` (failing runs),
-  `…/_state/mongodb/profiles/pie/instrument.log` (successful reference),
-  baselines `…/_state/mongodb/binaries/{pie,no-pie}/mongod`.
+Two independent, sequential causes; both verified.
+
+**Cause 1 (fixed): kernel OOM kill during `llvm-bolt -instrument`.**
+On the original 15 GB host, both modes were killed by the OOM killer
+(`dmesg`: `Out of memory: Killed process ... (llvm-bolt) ... anon-rss:
+15.57 GB / 15.52 GB`) — a silent SIGKILL, hence no error text, non-zero
+exit, no output binary, and a log that ends right after
+`BOLT-INFO: clear procedure is ...`: the next step,
+`InstrumentationRuntimeLibrary::emitTablesAsELFNote` → `buildTables()`,
+materializes the ~177 MB descriptor tables (plus two further ~177 MB
+copies) on top of the peak. The Sept 17 periodic run had succeeded by a
+small margin; the computed-goto jump-table fixes in BOLT (commits
+`8bba80ca2a95`, `059e374b470e`) claim slightly more tables on mongod
+(+305 indirect-call sites, descriptors 177.64 MB vs 177.59 MB) and tipped
+the peak over. The flag deltas of the failing invocation
+(no `-instrumentation-sleep-time`, no `-instrumentation-no-counters-clear`,
+plus `-instrumentation-file-append-pid`) were exonerated. After raising
+the WSL VM to 20 GB, instrumentation completes: measured peak VmHWM
+15.79 GB (pie) / 16.31 GB (no-pie).
+
+**Cause 2 (inherent, not fixable harness-side): mongod bypasses DT_FINI.**
+With instrumentation succeeding, both modes still produce no exit dump:
+mongod shuts down cleanly (WiredTiger checkpoint, `exitCode: 0` in the
+server log) but terminates via `quickExit()` — `_exit()` — in
+`logAndQuickExit_inlock()` (`src/mongo/util/exit.cpp`), immediately after
+logging `Shutting down ... exitCode: 0`. `_exit()` does not run
+`_dl_fini`/DT_FINI handlers, so BOLT's runtime finalizer
+`__bolt_instr_fini` (verified: output DT_FINI points at it,
+`0x14605580`; entry point hooked likewise) never executes, and with
+sleep-time 0 that finalizer is the only dump path. No kernel crash record
+(`dmesg` clean), the dump simply never runs. This is by-design mongod
+behavior; the only BOLT-side workarounds would be a signal-triggered or
+periodic dump — i.e. the existing periodic `profile.sh`, which remains the
+supported way to profile MongoDB. Test result: `profile-exit.sh` correctly
+fails fast with
+`no stable .fdata exit dumps produced within 60s`.
+
+* Repro: §8.3. Artifacts: `…/_state/mongodb/profiles/{pie,no-pie}/`
+  `instrument-exit.log` (complete instrument), `server-profile-exit.log`
+  (clean shutdown), `fdata-exit/` (empty); verification transcripts
+  `bolt-harness/work/verify-mongodb-exit-{pie,nopie}.out` (with VmHWM
+  poller output). Reference success (periodic, pre-RAM-raise):
+  `…/profiles/pie/instrument.log`.
 
 ### 8.3 Reproducing the matrix (x86_64)
 
