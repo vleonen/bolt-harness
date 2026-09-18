@@ -215,6 +215,11 @@ YCSB will look up keys that were never inserted.
   `-instrumentation-no-counters-clear`): each dump is cumulative, so the last
   dump holds the complete profile. The workload must run longer than the dump
   interval; `profile.sh` enforces this.
+
+`pipeline/profile-exit.sh` is the complementary variant (dump at process
+exit only, liveness/crash checks included). MongoDB is the slowest app to
+instrument; leave `PROFILE_EXIT_VALIDATE_BOLT` off unless a full BOLT parse
+of the merged profile is explicitly wanted.
 - **`-rewrite` is experimental**; a failure is non-fatal and the variant is
   skipped (`optimize.sh`).
 - Only the `mongod` server binary is optimized; mongosh/YCSB are clients.

@@ -130,6 +130,14 @@ Set `RESET_DATA=1` to wipe and re-initialize the dataset.
   `-instrumentation-no-counters-clear`): each dump is cumulative, so the last
   dump always holds the complete profile. The workload must run longer than the
   dump interval; `profile.sh` enforces this.
+
+`pipeline/profile-exit.sh` is the complementary variant: no periodic dump
+options are passed, the profile is written when processes exit. PostgreSQL
+forks a backend per connection, so each backend dumps on exit — keep the
+variant's default `-instrumentation-file-append-pid` on unless deliberately
+testing the raw single-file behavior (`PROFILE_EXIT_APPEND_PID=0`). The
+script fails the run on backend crash markers ("terminated by signal") in
+the server log.
 - **PostgreSQL's computed-goto expression interpreter is disabled** at build
   time (`pgac_cv_computed_goto=no`, see Build recipe) because `llvm-bolt
   -instrument` corrupts its `&&label` dispatch table. Re-enable with

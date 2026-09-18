@@ -98,6 +98,7 @@ measured workload. Defaults:
 | `BENCH_TIME` | `15` | seconds per test per rep |
 | `WARMUP` / `REPS` | `1` / `3` | discarded / recorded rounds |
 | `PROFILE_SLEEP_TIME` | `10` | BOLT profile dump interval (s) |
+| `PROFILE_EXIT_TEST_TIME` | `30` | workload seconds for `profile-exit.sh` (dump at finalization) |
 | `INNODB_BUFFER_POOL_SIZE` | `4G` | sized to hold the dataset in memory |
 | `PROFILE_PORT` / `BENCH_PORT` | `3307` / `3308` | TCP ports |
 | `SERVER_CPUS` / `CLIENT_CPUS` | arch-aware (`0-3`/`8-11` on aarch64) | CPU pinning |
@@ -115,6 +116,12 @@ Set `RESET_DATA=1` to wipe and re-prepare the dataset.
   `-instrumentation-no-counters-clear`): each dump is cumulative, so the last
   dump always holds the complete profile. The workload must run longer than the
   dump interval; `profile.sh` enforces this.
+
+`pipeline/profile-exit.sh` is the complementary variant: no periodic dump
+options are passed, the profile is written when the instrumented server
+exits, and the script verifies the server survives the workload and shuts
+down without crash markers. Single-process server; the default
+`-instrumentation-file-append-pid` is harmless.
 - **`-rewrite` is experimental**, especially on a large C++ server with
   MariaDB's `ro_after_init` linker script. If it fails, `optimize.sh` stops
   before benchmarking, but a regular `bolt` build is still produced.

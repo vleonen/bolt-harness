@@ -22,6 +22,7 @@ bolt-harness/
 ├── lib/common.sh          # shared paths, pinning, ports, BOLT tool locations
 ├── pipeline/              # application-agnostic stages
 │   ├── profile.sh         # llvm-bolt -instrument + app workload + merge-fdata
+│   ├── profile-exit.sh    # same, but profile dumped at app finalization only
 │   ├── optimize.sh        # <binary>.bolt and <binary>.bolt-rewrite
 │   ├── bench.sh           # server lifecycle + warmup/reps + normalized results
 │   ├── compare.sh         # baseline vs bolt vs bolt-rewrite + geomean
@@ -106,12 +107,18 @@ See `apps/python/README.md` for the recipe, flags and knobs.
 |---|---|---|
 | 1 | `apps/<app>/build.sh` | App-specific build with BOLT-friendly flags; snapshots the baseline binary + build info. |
 | 2 | `pipeline/profile.sh` | Instruments the baseline with `llvm-bolt -instrument`, runs the application workload longer than the periodic dump interval, merges the `.fdata` with `merge-fdata`. |
+| 2b | `pipeline/profile-exit.sh` | Optional (`PROFILE_EXIT=1` in `run-all.sh`, or standalone): instruments **without** `-instrumentation-sleep-time`/`-instrumentation-no-counters-clear` so the profile is dumped at application finalization (process exit) only, and checks that the instrumented binary stays alive through the workload, exits cleanly on shutdown (no crash markers in the server log) and actually produces the exit-dump `.fdata`. Output: `profile.exit.merged.fdata`, separate from the periodic profile. `-instrumentation-file-append-pid` is on by default (forking servers, e.g. PostgreSQL backends, would overwrite one shared `.fdata`); disable with `PROFILE_EXIT_APPEND_PID=0`. |
 | 3 | `pipeline/optimize.sh` | Produces `<binary>.bolt` (README flags) and `<binary>.bolt-rewrite` (`+ -rewrite`) from the merged profile. |
 | 4 | `pipeline/bench.sh` | Starts a fresh server per variant, runs `WARMUP` discarded + `REPS` recorded workload rounds, stores raw output and normalized `summary.tsv`. |
 | 5 | `pipeline/compare.sh` | Averages each variant's newest run and prints per-metric deltas + geomean. |
 
 Stages are skippable with `SKIP_BUILD`, `SKIP_PROFILE`, `SKIP_OPTIMIZE`,
-`SKIP_BENCH`, `SKIP_COMPARE`.
+`SKIP_BENCH`, `SKIP_COMPARE`. The exit-dump profiling variant is enabled with
+`PROFILE_EXIT=1` (skippable alone via `SKIP_PROFILE_EXIT=1`); tunables:
+`PROFILE_EXIT_TEST_TIME` (workload seconds, default 30), `PROFILE_EXIT_WAIT`
+(max wait for exit dumps, default 60), `PROFILE_EXIT_APPEND_PID` (default 1)
+and `PROFILE_EXIT_VALIDATE_BOLT=1` to additionally parse the merged profile
+with `llvm-bolt -data=`.
 
 ## Adding an application
 

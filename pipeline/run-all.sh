@@ -6,6 +6,10 @@
 # Stages can be skipped via env guards:
 #   SKIP_BUILD=1 SKIP_PROFILE=1 SKIP_OPTIMIZE=1 SKIP_BENCH=1 SKIP_COMPARE=1
 #
+# The optional exit-dump profiling variant (dump at application finalization,
+# no -instrumentation-sleep-time) runs after the periodic profile when
+# PROFILE_EXIT=1 (skip it alone with SKIP_PROFILE_EXIT=1).
+#
 # Select the application with APP=<name> (default: mariadb).
 set -euo pipefail
 
@@ -30,6 +34,9 @@ for MODE in "${MODES[@]}"; do
 
   [ "${SKIP_BUILD:-0}" = 1 ] || "$APP_DIR/build.sh" "$MODE"
   [ "${SKIP_PROFILE:-0}" = 1 ] || "$HARNESS_ROOT/pipeline/profile.sh" "$MODE"
+  if [ "${PROFILE_EXIT:-0}" = 1 ] && [ "${SKIP_PROFILE_EXIT:-0}" != 1 ]; then
+    "$HARNESS_ROOT/pipeline/profile-exit.sh" "$MODE"
+  fi
   [ "${SKIP_OPTIMIZE:-0}" = 1 ] || "$HARNESS_ROOT/pipeline/optimize.sh" "$MODE"
 
   if [ "${SKIP_BENCH:-0}" != 1 ]; then
