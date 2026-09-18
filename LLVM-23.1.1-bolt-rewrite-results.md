@@ -1036,6 +1036,13 @@ revisions of this report).
     warn + `.failed`) always runs. Found during the 2026-09-17 x86_64
     re-validation when the first CPython `bolt` output failed its import smoke
     test (issue 12).
+14. **MongoDB: `-instrument` without periodic-dump flags fails on x86_64
+    (open).** Instrumenting mongod for dump-at-finalization profiling (no
+    `-instrumentation-sleep-time`, no `-instrumentation-no-counters-clear`,
+    plus `-instrumentation-file-append-pid`) exits non-zero on both link modes
+    right before the build-id patch message, with no error text and no output
+    binary. The periodic-dump instrumentation of the same binary still works.
+    Details, repro and artifacts: §8. To be investigated separately.
 
 ---
 
@@ -1194,3 +1201,86 @@ The prior `d1723d9d` optimized binaries are kept under
   `…/_state/python/profiles/<mode>/profile.merged.fdata`; BOLT logs
   `…/_state/python/binaries/<mode>/bolt-{bolt,bolt-rewrite,bolt-rewrite-nohuge}.log`.
   x86_64 CPython figures are recorded in commit `a78e709`.
+
+## 8. Dump-at-finalization instrumentation validation (2026-09-18, x86_64)
+
+Validates BOLT instrumentation with the profile written **only at application
+finalization** (process exit): `pipeline/profile-exit.sh` (added in commit
+`fdc7100`) instruments **without** `-instrumentation-sleep-time` and
+**without** `-instrumentation-no-counters-clear`, keeps
+`-instrumentation-file-append-pid` on by default, and asserts that the
+instrumented binary stays alive through its workload, exits cleanly on
+graceful shutdown (bounded wait + crash-marker scan of the server log), and
+actually produces stable exit-dump `.fdata` files that `merge-fdata` can
+merge into `profiles/<mode>/profile.exit.merged.fdata`. The periodic-dump
+`profile.sh` flow is unchanged and was not re-run here.
+
+Environment: x86_64 host (8 cores, 15 GB RAM), the four running app
+containers, `llvm-bolt` from `/llvm/build23` (branch
+`llvmorg-23.1.1-rewrite`, including the computed-goto jump-table fixes
+`8bba80ca2a95` and `059e374b470e`).
+
+### 8.1 Result matrix
+
+| App | pie | no-pie |
+|---|---|---|
+| MariaDB | PASS — 1 exit dump, merged 5.1 MB | PASS — 1 exit dump, merged 5.2 MB; a second run with `PROFILE_EXIT_VALIDATE_BOLT=1` additionally parsed the merged profile with `llvm-bolt -data=` cleanly |
+| PostgreSQL | PASS — 41 exit dumps (postmaster + forked backends), merged 1.7 MB | PASS — 41 exit dumps, merged 1.7 MB |
+| CPython | PASS — 26 exit dumps (forked pyperf workers), merged 2.8 MB | PASS — 26 exit dumps, merged 2.8 MB |
+| MongoDB | **FAIL** — `llvm-bolt -instrument` exits non-zero; no instrumented binary | **FAIL** — same |
+
+CPython ran with `PYTHON_BENCH_TESTS=regex_v8,nbody` (subset; its workload is
+pyperf-driven, not wall-clock-bounded). All PASSing combos satisfied every
+check: server liveness through the workload, clean exit after shutdown, no
+crash markers in the server log, stable `.fdata` exit dumps, successful merge.
+
+### 8.2 MongoDB failure — details for follow-up investigation (issue 5.14)
+
+* **Commands** (both failed identically):
+  ```
+  docker exec bolt-harness-mongodb bash -c 'export APP=mongodb HARNESS_WORK=/work \
+    BOLT_BIN_DIR=/llvm/build23/bin CC=gcc-12 CXX=g++-12 \
+    MONGODB_PYTHON=/work/mongodb/venv/bin/python3 YCSB_DIR=/work/ycsb; \
+    /harness/pipeline/profile-exit.sh pie'    # and no-pie
+  ```
+* **Symptom**: the script dies with `ERROR: BOLT instrumentation failed`;
+  `mongod.instr-exit` is not produced. `instrument-exit.log` (77 lines, full
+  stdout+stderr) ends at
+  `BOLT-INFO: clear procedure is 0x14604060` (pie; `0x1462e060` no-pie) —
+  i.e. `llvm-bolt` exits non-zero with **no error message** right before the
+  stage that prints `BOLT-INFO: patched build-id (flipped last bit)` in the
+  successful run. Instrumentation stats (3.66 M counters, 177 MB descriptors)
+  are all printed before the failure, and 14 GB of the 15 GB host RAM was
+  available, so a late-stage OOM kill is unlikely.
+* **Reference success**: the periodic-dump instrumentation of the *same*
+  binaries on the same host/container (2026-09-17, `instrument.log`, 86 lines)
+  completes those final lines (`patched build-id`, `_end`, runtime
+  `DT_FINI`/entry-point hooking) and produced `mongod.instr`. Both runs used
+  `--no-threads` (appended by `apps/mongodb/app.sh` to
+  `BOLT_INSTRUMENT_EXTRA_FLAGS`).
+* **Flag deltas failing vs succeeding invocation**: failing omits
+  `-instrumentation-sleep-time=10` and `-instrumentation-no-counters-clear`,
+  and adds `-instrumentation-file-append-pid`. The stop point is the post-emit
+  metadata finalization (build-id patch) — note the earlier observation that
+  `-rewrite` output build-id handling was also suspect, possibly related.
+  Narrowing which of the three flag deltas triggers it (e.g. re-run
+  instrument with `-instrumentation-file-append-pid` added to the periodic
+  flag set) and capturing `llvm-bolt`'s exit code / signal (`echo $?`,
+  `dmesg`) are the suggested first steps.
+* **Artifacts**:
+  `…/_state/mongodb/profiles/{pie,no-pie}/instrument-exit.log` (failing runs),
+  `…/_state/mongodb/profiles/pie/instrument.log` (successful reference),
+  baselines `…/_state/mongodb/binaries/{pie,no-pie}/mongod`.
+
+### 8.3 Reproducing the matrix (x86_64)
+
+```
+docker exec bolt-harness-mariadb    bash -c 'export APP=mariadb    HARNESS_WORK=/work BOLT_BIN_DIR=/llvm/build23/bin CC=gcc;    /harness/pipeline/profile-exit.sh pie'
+docker exec bolt-harness-postgresql bash -c 'export APP=postgresql HARNESS_WORK=/work BOLT_BIN_DIR=/llvm/build23/bin CC=gcc;    /harness/pipeline/profile-exit.sh no-pie'
+docker exec bolt-harness-python    bash -c 'export APP=python     HARNESS_WORK=/work BOLT_BIN_DIR=/llvm/build23/bin CC=gcc PYTHON_BENCH_TESTS=regex_v8,nbody; /harness/pipeline/profile-exit.sh pie'
+docker exec bolt-harness-mongodb   bash -c 'export APP=mongodb    HARNESS_WORK=/work BOLT_BIN_DIR=/llvm/build23/bin CC=gcc-12 CXX=g++-12 MONGODB_PYTHON=/work/mongodb/venv/bin/python3 YCSB_DIR=/work/ycsb; /harness/pipeline/profile-exit.sh pie'
+```
+`profile-exit.sh` takes a single mode argument; repeat per mode. Outputs live
+next to the periodic profiles as `fdata-exit/`, `*.instr-exit` and
+`profile.exit.merged.fdata` (PostgreSQL under its app-local
+`work/postgresql/_state/postgresql/profiles/<mode>/` mount).
