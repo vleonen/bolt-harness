@@ -29,6 +29,13 @@
 #                                         the same .fdata on exit)
 #   PROFILE_EXIT_VALIDATE_BOLT (default 0) additionally parse the merged
 #                                         profile with llvm-bolt -data=...
+#
+# NOTE: this variant requires the application to terminate through regular
+# ELF finalization (exit()/return from main), where BOLT's runtime DT_FINI
+# hook writes the profile. Applications that exit via _exit()/quick_exit()
+# (e.g. mongod) or die by SIGKILL bypass finalizers and can never produce
+# an exit dump - profile them with profile.sh and
+# -instrumentation-sleep-time (periodic dumps) instead.
 set -euo pipefail
 
 HARNESS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

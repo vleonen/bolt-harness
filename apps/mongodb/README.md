@@ -220,9 +220,11 @@ YCSB will look up keys that were never inserted.
 terminates via `quickExit()` (`_exit()`), which bypasses the DT_FINI hook
 where BOLT's runtime writes the at-exit profile, so no exit dump can be
 produced regardless of flags (root-caused 2026-09-18; see §8.2 of
-`LLVM-23.1.1-bolt-rewrite-results.md`). Use the periodic-dump
-`profile.sh` for MongoDB. Also note `llvm-bolt -instrument` on mongod
-peaks at ~16 GB RSS — it needs a correspondingly large host.
+`LLVM-23.1.1-bolt-rewrite-results.md`). Profile MongoDB with the
+periodic-dump `profile.sh`, i.e. rely on `-instrumentation-sleep-time`
+(the app default, 10 s) instead of at-exit dumping. Also note
+`llvm-bolt -instrument` on mongod peaks at ~16 GB RSS — it needs a
+correspondingly large host.
 - **`-rewrite` is experimental**; a failure is non-fatal and the variant is
   skipped (`optimize.sh`).
 - Only the `mongod` server binary is optimized; mongosh/YCSB are clients.

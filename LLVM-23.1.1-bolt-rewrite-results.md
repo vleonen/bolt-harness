@@ -1048,8 +1048,14 @@ revisions of this report).
     `Shutting down ... exitCode: 0` log line), which bypasses `_dl_fini`/the
     DT_FINI hook where BOLT's runtime writes the at-exit profile. The
     instrumented binary is correct (DT_FINI verified to point at
-    `__bolt_instr_fini`). Inherent mongod behavior - use the periodic-dump
-    `profile.sh` for MongoDB. Details: §8.2.
+    `__bolt_instr_fini`). Inherent mongod behavior - and, as terminating via
+    `_exit()`/`quick_exit()` is not a regular way to finish application
+    execution, it is **not** something BOLT handles in the regular path.
+    **Recommendation:** profile such applications (MongoDB included) with
+    `-instrumentation-sleep-time=N` periodic dumps (`profile.sh`); the
+    exit-dump variant (`profile-exit.sh`) is only applicable to applications
+    that terminate through regular ELF finalization (`exit()`/return from
+    `main`). Details: §8.2.
 
 ---
 
@@ -1279,6 +1285,16 @@ periodic dump — i.e. the existing periodic `profile.sh`, which remains the
 supported way to profile MongoDB. Test result: `profile-exit.sh` correctly
 fails fast with
 `no stable .fdata exit dumps produced within 60s`.
+
+**Recommendation.** Terminating via `_exit()`/`quick_exit()` skips regular
+ELF finalization (`_dl_fini`/`atexit`), so it is not a common or correct
+way to finish application execution, and BOLT intentionally does not
+handle it in the regular path: the at-exit dump relies on the DT_FINI
+hook. Applications that terminate this way (mongod, or any process killed
+with `SIGKILL`) cannot produce a finalization dump by design — profile
+them with `-instrumentation-sleep-time=N` periodic dumps (`profile.sh`).
+The `profile-exit.sh` variant is applicable only to applications that
+exit through regular ELF finalization (`exit()`, `return` from `main`).
 
 * Repro: §8.3. Artifacts: `…/_state/mongodb/profiles/{pie,no-pie}/`
   `instrument-exit.log` (complete instrument), `server-profile-exit.log`
