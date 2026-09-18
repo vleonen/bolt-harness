@@ -1356,6 +1356,15 @@ supported way to profile MongoDB. Test result: `profile-exit.sh` correctly
 fails fast with
 `no stable .fdata exit dumps produced within 60s`.
 
+**Independence from the `-rewrite` work.** The full sequence reproduces
+identically on a stock upstream build (tag `llvmorg-23.1.1`, BOLT rev
+`6dfe1677ab8d`, host `build_base`): instrumentation completes (DT_FINI hook
+verified in the output), peak VmHWM 16.08 GB (pie) / 16.33 GB (no-pie),
+clean mongod shutdown, empty `fdata-exit/`, and the same
+`no stable .fdata exit dumps` failure. The exit-dump gap is therefore a
+property of mongod's `quickExit` termination on stock BOLT 23.1.1, not of
+the `-rewrite` feature or this branch's changes.
+
 **Recommendation.** Terminating via `_exit()`/`quick_exit()` skips regular
 ELF finalization (`_dl_fini`/`atexit`), so it is not a common or correct
 way to finish application execution, and BOLT intentionally does not
