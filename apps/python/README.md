@@ -113,7 +113,10 @@ unpickle_pure_python,go,hexiom,nqueens,scimark,float,telco
 `PROFILE_SLEEP_TIME=0` is intentional: pyperformance forks a worker per
 benchmark, which deadlocks with BOLT's periodic dump thread. BOLT therefore
 dumps the profile at each process exit (its default with sleep-time 0), and
-`profile.sh` merges the ~440 per-process `.fdata` files.
+`profile.sh` merges the ~440 per-process `.fdata` files. Python is thus the
+reference case for `pipeline/profile-exit.sh`, which formalizes this mode
+(no periodic-dump flags at all) with liveness and clean-exit checks; its
+output lands in `profile.exit.merged.fdata`, separate from `profile.sh`'s.
 
 ## BOLT flags and verification
 
@@ -122,9 +125,11 @@ dumps the profile at each process exit (its default with sleep-time 0), and
 - `-skip-funcs=_PyEval_EvalFrameDefault,sre_ucs1_match/1,sre_ucs2_match/1,sre_ucs4_match/1`
   excludes the computed-goto functions from **instrumentation** (mirrors
   CPython's own `--enable-bolt` support). It is not passed to the optimization
-  pass: `-rewrite` re-lays-out the whole binary and rejects `-skip-funcs`
-  (skipped functions are neither disassembled nor emitted, silently corrupting
-  the output).
+  pass on any arch: `-rewrite` re-lays-out the whole binary and rejects
+  `-skip-funcs` (skipped functions are neither disassembled nor emitted,
+  silently corrupting the output), and BOLT now recognizes computed-goto
+  label-address tables as jump tables on x86_64, so no function needs to be
+  skipped there either.
 - `app_verify_bin` gives `optimize.sh` a library-aware health check: it stages
   the `.so` under its SONAME, then runs the launcher with
   `-c 'import sys, pyperf, pyperformance; print(sys.version)'` so a miscompiled
@@ -140,7 +145,13 @@ dumps the profile at each process exit (its default with sleep-time 0), and
   `-rewrite` outputs crashed on import; rev `d0a877fc33a1` — reject `-rewrite`
   with `-skip-funcs` plus an AArch64 TLSDESC descriptor retargeting fix — makes
   them work on aarch64 (2026-09-17: `bolt`, `-rewrite` and `-rewrite-nohuge`
-  for both modes). x86_64 was not re-verified.
+  for both modes). x86_64 was unlocked later by BOLT fixes that recognize
+  computed-goto label-address tables as jump tables on x86_64 (register-held
+  table bases behind `notrack`-prefixed indirect jumps, `R_X86_64_RELATIVE`
+  table entries in PIE, unrelocated absolute entries in non-PIE) and map
+  interior function addresses through address translation when rewriting
+  data relocations; with those, all six x86_64 variants pass the import smoke
+  test and a pyperformance subset (`regex_v8`, `nbody`, `json_loads`).
 - On aarch64, `no-pie` must be built with `PY_COMPUTED_GOTO=0`. With the
   default computed-goto eval loop, the BOLT-instrumented static executable
   aborts (`free(): invalid pointer`) inside `subprocess`/fork when
