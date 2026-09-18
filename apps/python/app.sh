@@ -72,7 +72,14 @@
 PY_SKIP_FUNCS="_PyEval_EvalFrameDefault,sre_ucs1_match/1,sre_ucs2_match/1,sre_ucs4_match/1"
 # pyperformance forks a worker per benchmark; append-pid keeps their profiles
 # separate (profile.sh globs profile*.fdata* and merge-fdata merges them).
-BOLT_INSTRUMENT_EXTRA_FLAGS="${BOLT_INSTRUMENT_EXTRA_FLAGS:-} -instrumentation-file-append-pid -skip-funcs=$PY_SKIP_FUNCS"
+# PY_INSTR_SKIP_FUNCS=0 drops -skip-funcs from instrumentation so the profile
+# also covers the computed-goto functions (eval loop, sre matchers); only
+# meaningful on BOLT builds that recognize those label tables as jump tables.
+: "${PY_INSTR_SKIP_FUNCS:=1}"
+BOLT_INSTRUMENT_EXTRA_FLAGS="${BOLT_INSTRUMENT_EXTRA_FLAGS:-} -instrumentation-file-append-pid"
+if [ "${PY_INSTR_SKIP_FUNCS}" = 1 ]; then
+  BOLT_INSTRUMENT_EXTRA_FLAGS="$BOLT_INSTRUMENT_EXTRA_FLAGS -skip-funcs=$PY_SKIP_FUNCS"
+fi
 # Do NOT skip functions in the optimization pass on any arch: skipped
 # functions are neither disassembled nor emitted, and `-rewrite` re-lays-out
 # the whole binary and rejects -skip-funcs (skipped functions would leave

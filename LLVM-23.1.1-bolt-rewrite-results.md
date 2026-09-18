@@ -1,6 +1,6 @@
 # LLVM 23.1.1 BOLT `-rewrite` — Results on MariaDB, PostgreSQL, MongoDB and CPython (aarch64 & x86_64)
 
-Date: 2026-09-15 (aarch64 MongoDB/CPython added 2026-09-16; aarch64 re-validated at `d0a877f` on 2026-09-17; x86_64 re-validated at `d0a877f` on 2026-09-17 with re-instrumentation)
+Date: 2026-09-15 (aarch64 MongoDB/CPython added 2026-09-16; aarch64 re-validated at `d0a877f` on 2026-09-17; x86_64 re-validated at `d0a877f` on 2026-09-17 with re-instrumentation; CPython x86_64 re-evaluated at `059e374` on 2026-09-18)
 Harness: `bolt-harness`
 Tool under test: `llvm-bolt`, LLVM **23.1.1**, branch `llvmorg-23.1.1-rewrite`:
 
@@ -29,10 +29,10 @@ Tool under test: `llvm-bolt`, LLVM **23.1.1**, branch `llvmorg-23.1.1-rewrite`:
   `d0a877f` behavior is a no-op vs. `d1723d9d` (no TLS-family relocations, no
   `-skip-funcs`), so their `-rewrite`/`-rewrite-nohuge` outputs are produced,
   verified and benched on x86_64 as well — closing the earlier "x86_64
-  `-rewrite` not re-verified" gap. CPython on x86_64 keeps `-skip-funcs` in the
-  optimization pass (without it the opt pass corrupts the computed-goto
-  dispatch, independently of the revision), so BOLT rejects `-rewrite` there
-  and only `bolt` is measured (§3.5).
+  `-rewrite` not re-verified" gap. At that revision CPython on x86_64 kept
+  `-skip-funcs` in the optimization pass and only `bolt` was measured (§3.5);
+  the 2026-09-18 re-evaluation at `059e374b470e` (below) removed that
+  constraint.
 - **MongoDB**: MongoDB 7.0 (`r7.0.43`, built from source with SCons) was added
   to the harness and measured with YCSB on x86_64 (2026-09-15, standard three
   configurations) and, on 2026-09-16, on aarch64 (both link modes, four
@@ -47,11 +47,16 @@ Tool under test: `llvm-bolt`, LLVM **23.1.1**, branch `llvmorg-23.1.1-rewrite`:
   two modes BOLT different targets: `pie` optimizes shared
   `libpython3.13.so.1.0`, `no-pie` the static `python3` executable. The aarch64
   `-rewrite` outputs were the motivation for the two fixes in `d0a877fc33a1`
-  and now run (see §3.5). On x86_64 `-rewrite` remains unavailable *by
-  construction*: the optimization pass must skip the computed-goto functions
-  (they are corrupted otherwise, on any revision), and `d0a877f` BOLT rejects
-  `-rewrite` combined with `-skip-funcs` — the `-rewrite`/`-rewrite-nohuge`
-  variants fail fast with `BOLT-ERROR` and are skipped by the pipeline.
+  and now run (see §3.5). On x86_64 `-rewrite` used to be unavailable *by
+  construction* (the optimization pass needed `-skip-funcs`, which `d0a877f`
+  BOLT rejects in `-rewrite` mode); revision `059e374b470e` removes that
+  constraint — the x86_64 optimization pass handles the computed-goto dispatch
+  without `-skip-funcs`, and all four configurations now run on x86_64
+  (2026-09-18): with the standard skip-funcs instrumentation `bolt` +9.04 % pie
+  / +15.22 % no-pie, `-rewrite` +6.69 % / +13.89 %, `-rewrite-nohuge` +5.15 % /
+  +12.79 %; with full-profile instrumentation (`PY_INSTR_SKIP_FUNCS=0`, see
+  §3.5) `bolt` +10.13 % pie / +20.46 % no-pie, `-rewrite` +7.33 % / +17.18 %,
+  `-rewrite-nohuge` +8.52 % / +15.87 %.
 
 ## Summary
 
@@ -95,15 +100,34 @@ geomean. `bolt-rewrite-nohuge`
 is the regular `-rewrite` build with BOLT's default 2 M huge-page code
 alignment replaced by the target's regular page size, i.e.
 `-rewrite --no-huge-pages` — see §2.3. "rej." = BOLT rejects the combination
-(`-rewrite` with `-skip-funcs`, required for CPython on x86_64, §3.5); the
-pipeline parks nothing and simply skips the variant.)
+(`-rewrite` with `-skip-funcs`, required for CPython on x86_64 at `d0a877f`,
+§3.5); the pipeline parks nothing and simply skips the variant. CPython x86_64
+was re-evaluated at `059e374` — table below.)
+
+**x86_64 CPython** (rev `059e374b470e`, 2026-09-18; four configurations × two instrumentation variants)
+
+| Instrumentation | Mode | `bolt` | `bolt-rewrite` | `bolt-rewrite-nohuge` | workload errors |
+|---|---|---|---|---|---|
+| skip-funcs (default) | pie | **+9.04 %** | **+6.69 %** | **+5.15 %** | 0 |
+| skip-funcs (default) | no-pie | **+15.22 %** | **+13.89 %** | **+12.79 %** | 0 |
+| full profile (`PY_INSTR_SKIP_FUNCS=0`) | pie | **+10.13 %** | **+7.33 %** | **+8.52 %** | 0 |
+| full profile (`PY_INSTR_SKIP_FUNCS=0`) | no-pie | **+20.46 %** | **+17.18 %** | **+15.87 %** | 0 |
+
+(First x86_64 session in which CPython `-rewrite` runs: BOLT `8bba80ca2a95`
+recognizes the computed-goto label tables on X86, so the optimization pass runs
+over every function. "Full profile" additionally drops `-skip-funcs` from
+*instrumentation*, so the profile finally covers `_PyEval_EvalFrameDefault` and
+the `sre_*` matchers — worth ~+1.1 pt (pie) / ~+5.2 pt (no-pie) on `bolt` at no
+measurable profile-time cost (444 s vs 447 s workload). All eight targets pass
+`app_verify_bin` and complete the full pyperformance suite with zero errors.)
 
 All optimized `-rewrite` binaries (plain and `bolt-rewrite-nohuge`) in the
 configurations above are produced, start, and complete the full benchmark
-workload with zero errors — on **both** architectures now. (With rev
-`d1723d9d`, CPython's aarch64 `-rewrite` outputs crashed on import; the rev
-`d0a877f` fixes resolve that on aarch64 — see §3.5, §4.5. On x86_64 CPython
-`-rewrite` is rejected by BOLT by design, see the CPython bullet above.)
+workload with zero errors — on **both** architectures and for **all four
+applications** now. (With rev `d1723d9d`, CPython's aarch64 `-rewrite` outputs
+crashed on import; the rev `d0a877f` fixes resolve that on aarch64 — see
+§3.5, §4.5. On x86_64 CPython `-rewrite` was rejected at `d0a877f` and works
+since `059e374`, see the CPython bullet above.)
 
 Binary size (measured on **stripped** binaries, §4.4): on **x86_64** `bolt`
 grows the runtime image by +16.6 % … +28 % for the servers and +89 % … +98 %
@@ -111,7 +135,9 @@ for CPython (it keeps the original code), while
 `-rewrite` is near size-neutral (≤ 2.3 %); for MariaDB/PostgreSQL x86_64
 `-rewrite` is already regular-page aligned and `bolt-rewrite-nohuge` matches it
 (≤ 24 B), while MongoDB `-rewrite` retains a 2 M-aligned PT_LOAD that
-`--no-huge-pages` removes (+2.1 %/+2.3 % → +0.7 %/+0.8 %). On **aarch64** `bolt` grows the runtime image by +60 % … +116 % and
+`--no-huge-pages` removes (+2.1 %/+2.3 % → +0.7 %/+0.8 %); x86_64 CPython
+`-rewrite` adds +1.2 % (pie) / +0.8 % (no-pie), byte-identical with
+`--no-huge-pages`. On **aarch64** `bolt` grows the runtime image by +60 % … +116 % and
 `-rewrite` by +3.7 % … +42.5 %; a substantial part of both is alignment/placement
 padding introduced by BOLT's default 2 M code alignment. Replacing it with the
 regular page size (`bolt-rewrite-nohuge`) removes the aarch64 `-rewrite`
@@ -215,6 +241,10 @@ The aarch64 re-validation on rev `d1723d9d` additionally exercises three
 | `208d52e30bb2` | common | Do not validate data references as branch targets: interior pointers (`func+offset` in a data pointer table) are tracked separately from control-flow targets instead of being reported as corrupted control flow and dropping the function. |
 | `ef39667af327` | x86-motivated, common | `-rewrite` is authoritative over `-lite`: it no longer implicitly enables x86 auto-lite, and an explicit `-lite` is overridden with a warning so every function is emitted. |
 | `d1723d9d8a4d` | x86_64 | x86 bfd lowering of the CET lazy-PLT `.got` slot (fall back to `.got` when there is no `.got.plt`); preserve renamed non-text originals so `.rodata` (and `.gcc_except_table`) content is not dropped. |
+| `d7136fcb56ab` | common | Reject `-rewrite` combined with `-skip-funcs` (skipped functions are not disassembled/emitted; callers would branch into reused addresses). |
+| `d0a877fc33a1` | aarch64 | Fix AArch64 TLSDESC descriptor retargeting (CPython `pie` crashed in `Py_InitializeFromConfig`). |
+| `8bba80ca2a95` | x86_64 | Recognize computed-goto label tables as jump tables on X86: resolve register-held table bases to their defining RIP-relative LEA, accept the notrack (`DS`) prefix, and take `R_X86_64_RELATIVE` addends (PIE) / raw values (non-PIE) as `JTT_NORMAL` entry relocations. Removes the need for `-skip-funcs` on GCC/clang computed-goto dispatches (CPython eval loop, `sre_*_match`). |
+| `059e374b470e` | common | `-rewrite`: map interior function addresses via address translation. |
 
 On aarch64 the only observable differences with these fixes are:
 
@@ -456,16 +486,29 @@ still skips), the `bolt`, `-rewrite` and `-rewrite-nohuge` binaries for both
 modes are produced, pass `app_verify_bin`, and complete the full pyperformance
 suite with zero errors (§4.5).
 
-**x86_64.** The arch split is inverted: without `-skip-funcs` the x86_64
-*optimization* pass corrupts the computed-goto dispatch (observed at rev
-`d0a877f` as well — the optimized library segfaults on the first import,
-jumping into a wild address; same hazard class as PostgreSQL's
-`dispatch_table`, §3.3's sibling note), so `apps/python/app.sh` keeps
-`-skip-funcs` in `BOLT_OPT_FLAGS` on x86_64 and omits it only on aarch64.
-Since `d0a877f` BOLT rejects `-rewrite` combined with `-skip-funcs`
-(`BOLT-ERROR: -rewrite is incompatible with -skip-funcs/-skip-funcs-file`),
-the x86_64 `-rewrite`/`-rewrite-nohuge` variants fail fast at optimize time and
-are skipped; `bolt` is unaffected and is the only x86_64 CPython variant.
+**x86_64.** Historical note: through rev `d0a877f` the x86_64 *optimization*
+pass corrupted the computed-goto dispatch when run without `-skip-funcs` (the
+optimized library segfaulted on the first import, jumping into a wild address;
+same hazard class as PostgreSQL's `dispatch_table`), so `app.sh` kept
+`-skip-funcs` in `BOLT_OPT_FLAGS` on x86_64 — and since `d0a877f` BOLT rejects
+`-rewrite` with `-skip-funcs`, x86_64 CPython was `bolt`-only. Revision
+`059e374b470e` (specifically `8bba80ca2a95`) teaches the x86 optimization pass
+to recognize the label-address tables, and the constraint is gone: with
+`-skip-funcs` dropped from `BOLT_OPT_FLAGS` on every arch, all four
+configurations are produced, verified and benched on x86_64 (2026-09-18,
+§4.5).
+
+**Instrumentation coverage (`PY_INSTR_SKIP_FUNCS`).** Instrumentation still
+skips the four computed-goto functions by default (mirroring CPython's own
+`--enable-bolt`), which means the profile carries no counters for the hottest
+function. With the new x86 jump-table recognition, instrumentation can run
+without `-skip-funcs` too; `apps/python/app.sh` exposes this as
+`PY_INSTR_SKIP_FUNCS=0`. Measured on x86_64 (2026-09-18): the full profile
+costs nothing in wall time (444 s vs 447 s pyperformance workload; 949 MB of
+raw per-process dumps) and buys `bolt` +1.1 pt (pie) / +5.2 pt
+(no-pie) — see the Summary table. Recommended for future x86_64 CPython runs;
+pending the same experiment on aarch64 the default stays `1` for
+cross-architecture comparability.
 
 Baseline binary characteristics (aarch64):
 
@@ -500,6 +543,8 @@ Geomean of per-workload ratios (baseline = 1.0000); higher is better.
 | x86_64 | MongoDB | no-pie | **+20.40 %** | **+15.30 %** | **+14.71 %** |
 | x86_64 | CPython | pie | **+10.02 %** | rej. | rej. |
 | x86_64 | CPython | no-pie | **+18.55 %** | rej. | rej. |
+| x86_64 | CPython ¹ | pie | **+10.13 %** | **+7.33 %** | **+8.52 %** |
+| x86_64 | CPython ¹ | no-pie | **+20.46 %** | **+17.18 %** | **+15.87 %** |
 
 On aarch64 `bolt` and `-rewrite` are within a few points of each other
 (MariaDB `pie` aside, where `bolt` leads by ~2.5 points in this session), as
@@ -510,8 +555,12 @@ performs within run-to-run noise of `bolt-rewrite` on both architectures
 (aarch64 −2.8 … +2.6 points, x86_64 −2.7 … +6.0 points; it is a *size* change,
 not a reordering change). CPython's figures are `ops_per_sec` geomeans
 (pyperformance); its aarch64 results use rev `d0a877f` and now include
-`-rewrite` (§3.5), while the x86_64 `-rewrite`/`-rewrite-nohuge` variants are
-rejected by BOLT (`-rewrite` with `-skip-funcs`, §3.5). All x86_64 server-app
+`-rewrite` (§3.5); the x86_64 CPython rows marked ¹ are the 2026-09-18
+re-evaluation at rev `059e374b470e` with **full-profile instrumentation**
+(`PY_INSTR_SKIP_FUNCS=0`) — the first x86_64 session with a working
+`-rewrite`; at the same rev with the default skip-funcs instrumentation
+`bolt` measured +9.04 % (pie) / +15.22 % (no-pie), `-rewrite` +6.69 % /
++13.89 %, `-rewrite-nohuge` +5.15 % / +12.79 %. All x86_64 server-app
 deltas were re-measured at rev `d0a877f` in one four-variant session per
 app/mode (2026-09-17) with fresh instrumentation; absolute levels vary
 between runs (see §5.5), but the ordering and magnitude are stable.
@@ -608,61 +657,64 @@ between runs (see §5.5), but the ordering and magnitude are stable.
 
 **x86_64 — CPython — pie**
 
+(Rev `059e374b470e`, 2026-09-18, full-profile instrumentation
+(`PY_INSTR_SKIP_FUNCS=0`); four configurations.)
+
 | workload | metric | baseline | bolt | bolt-rewrite | bolt-rewrite-nohuge |
 |---|---|---|---|---|---|
-| deltablue | ops_per_sec | 31,959.53 | 32,727.20 | — | — |
-| fannkuch | ops_per_sec | 3.55 | 3.94 | — | — |
-| float | ops_per_sec | 35.86 | 38.23 | — | — |
-| go | ops_per_sec | 21.69 | 22.13 | — | — |
-| hexiom | ops_per_sec | 8,010.98 | 8,521.99 | — | — |
-| json_dumps | ops_per_sec | 2,026.71 | 2,258.96 | — | — |
-| json_loads | ops_per_sec | 27,685,833.33 | 31,634,066.67 | — | — |
-| nbody | ops_per_sec | 36.18 | 36.25 | — | — |
-| nqueens | ops_per_sec | 29.55 | 32.14 | — | — |
-| pickle | ops_per_sec | 121,129,333.33 | 129,158,666.67 | — | — |
-| pickle_pure_python | ops_per_sec | 156,881.33 | 163,283.33 | — | — |
-| pyflate | ops_per_sec | 3.47 | 3.56 | — | — |
-| python_startup | ops_per_sec | 2,270.50 | 2,385.36 | — | — |
-| regex_compile | ops_per_sec | 21.77 | 23.00 | — | — |
-| regex_v8 | ops_per_sec | 599.88 | 631.68 | — | — |
-| richards | ops_per_sec | 132.36 | 137.25 | — | — |
-| scimark_fft | ops_per_sec | 4.68 | 5.16 | — | — |
-| scimark_lu | ops_per_sec | 28.18 | 33.50 | — | — |
-| scimark_monte_carlo | ops_per_sec | 95.49 | 103.03 | — | — |
-| scimark_sor | ops_per_sec | 23.65 | 24.96 | — | — |
-| scimark_sparse_mat_mult | ops_per_sec | 9,919.07 | 21,273.77 | — | — |
-| spectral_norm | ops_per_sec | 27.96 | 30.60 | — | — |
-| telco | ops_per_sec | 5,481.84 | 5,960.70 | — | — |
-| unpickle_pure_python | ops_per_sec | 457,227.33 | 470,404.33 | — | — |
+| deltablue | ops_per_sec | 31,346.87 | 32,060.53 | 31,515.03 | 31,058.73 |
+| fannkuch | ops_per_sec | 3.49 | 3.86 | 3.82 | 3.88 |
+| float | ops_per_sec | 34.62 | 36.46 | 36.41 | 36.42 |
+| go | ops_per_sec | 21.26 | 21.80 | 21.83 | 21.94 |
+| hexiom | ops_per_sec | 7,958.46 | 8,415.28 | 8,211.40 | 8,236.91 |
+| json_dumps | ops_per_sec | 1,979.73 | 2,208.38 | 2,193.81 | 2,198.83 |
+| json_loads | ops_per_sec | 27,068,500.00 | 31,226,400.00 | 31,057,566.67 | 31,660,333.33 |
+| nbody | ops_per_sec | 35.84 | 36.48 | 36.48 | 36.39 |
+| nqueens | ops_per_sec | 29.14 | 31.82 | 30.98 | 30.38 |
+| pickle | ops_per_sec | 119,114,666.67 | 127,736,000.00 | 126,271,333.33 | 124,686,666.67 |
+| pickle_pure_python | ops_per_sec | 152,618.67 | 158,214.33 | 156,474.67 | 157,433.67 |
+| pyflate | ops_per_sec | 3.28 | 3.43 | 3.39 | 3.41 |
+| python_startup | ops_per_sec | 2,131.04 | 2,292.76 | 2,320.18 | 2,328.82 |
+| regex_compile | ops_per_sec | 21.16 | 22.32 | 22.53 | 22.33 |
+| regex_v8 | ops_per_sec | 589.64 | 592.25 | 590.25 | 596.84 |
+| richards | ops_per_sec | 130.01 | 136.14 | 132.78 | 131.72 |
+| scimark_fft | ops_per_sec | 4.61 | 5.04 | 4.96 | 4.99 |
+| scimark_lu | ops_per_sec | 27.39 | 32.91 | 31.59 | 32.13 |
+| scimark_monte_carlo | ops_per_sec | 94.61 | 99.11 | 102.32 | 102.24 |
+| scimark_sor | ops_per_sec | 23.39 | 24.82 | 24.53 | 24.57 |
+| scimark_sparse_mat_mult | ops_per_sec | 9,834.70 | 21,017.10 | 13,468.97 | 16,728.87 |
+| spectral_norm | ops_per_sec | 27.24 | 29.99 | 30.09 | 29.90 |
+| telco | ops_per_sec | 5,332.82 | 5,817.25 | 5,871.84 | 5,907.22 |
+| unpickle_pure_python | ops_per_sec | 437,579.33 | 461,476.67 | 453,720.00 | 462,485.33 |
 
 **x86_64 — CPython — no-pie**
 
 | workload | metric | baseline | bolt | bolt-rewrite | bolt-rewrite-nohuge |
 |---|---|---|---|---|---|
-| deltablue | ops_per_sec | 33,507.40 | 35,213.07 | — | — |
-| fannkuch | ops_per_sec | 4.31 | 4.85 | — | — |
-| float | ops_per_sec | 82.67 | 93.47 | — | — |
-| go | ops_per_sec | 22.05 | 23.44 | — | — |
-| hexiom | ops_per_sec | 8,765.00 | 9,015.22 | — | — |
-| json_dumps | ops_per_sec | 2,282.63 | 5,144.57 | — | — |
-| json_loads | ops_per_sec | 30,976,133.33 | 34,811,733.33 | — | — |
-| nbody | ops_per_sec | 95.57 | 93.23 | — | — |
-| nqueens | ops_per_sec | 36.31 | 38.31 | — | — |
-| pickle | ops_per_sec | 126,742,333.33 | 135,747,666.67 | — | — |
-| pickle_pure_python | ops_per_sec | 169,215.00 | 178,173.67 | — | — |
-| pyflate | ops_per_sec | 3.69 | 3.78 | — | — |
-| python_startup | ops_per_sec | 2,378.88 | 3,392.63 | — | — |
-| regex_compile | ops_per_sec | 24.42 | 25.65 | — | — |
-| regex_v8 | ops_per_sec | 622.74 | 1,064.96 | — | — |
-| richards | ops_per_sec | 136.28 | 150.29 | — | — |
-| scimark_fft | ops_per_sec | 5.45 | 6.23 | — | — |
-| scimark_lu | ops_per_sec | 34.47 | 81.75 | — | — |
-| scimark_monte_carlo | ops_per_sec | 113.67 | 122.29 | — | — |
-| scimark_sor | ops_per_sec | 25.41 | 27.25 | — | — |
-| scimark_sparse_mat_mult | ops_per_sec | 23,511.67 | 26,630.13 | — | — |
-| spectral_norm | ops_per_sec | 34.48 | 38.52 | — | — |
-| telco | ops_per_sec | 6,450.15 | 7,229.16 | — | — |
-| unpickle_pure_python | ops_per_sec | 512,378.00 | 551,185.67 | — | — |
+| deltablue | ops_per_sec | 33,138.80 | 35,217.07 | 34,820.93 | 34,218.50 |
+| fannkuch | ops_per_sec | 4.24 | 4.99 | 4.96 | 5.01 |
+| float | ops_per_sec | 67.55 | 89.16 | 88.63 | 89.78 |
+| go | ops_per_sec | 22.11 | 22.32 | 22.48 | 22.33 |
+| hexiom | ops_per_sec | 8,764.63 | 8,549.75 | 8,750.14 | 8,748.31 |
+| json_dumps | ops_per_sec | 2,238.74 | 5,109.74 | 4,209.64 | 5,132.33 |
+| json_loads | ops_per_sec | 30,910,600.00 | 35,054,866.67 | 36,057,300.00 | 35,494,000.00 |
+| nbody | ops_per_sec | 94.52 | 97.36 | 94.31 | 94.55 |
+| nqueens | ops_per_sec | 35.92 | 38.80 | 38.11 | 37.13 |
+| pickle | ops_per_sec | 123,358,000.00 | 130,322,333.33 | 131,131,333.33 | 135,600,666.67 |
+| pickle_pure_python | ops_per_sec | 166,065.00 | 167,823.33 | 171,718.00 | 174,740.00 |
+| pyflate | ops_per_sec | 3.62 | 3.55 | 3.58 | 3.62 |
+| python_startup | ops_per_sec | 2,355.59 | 3,248.35 | 2,462.08 | 2,460.51 |
+| regex_compile | ops_per_sec | 24.12 | 25.05 | 25.40 | 24.87 |
+| regex_v8 | ops_per_sec | 849.09 | 1,363.28 | 1,368.27 | 1,367.34 |
+| richards | ops_per_sec | 135.97 | 151.04 | 145.40 | 149.55 |
+| scimark_fft | ops_per_sec | 5.36 | 6.49 | 6.35 | 6.51 |
+| scimark_lu | ops_per_sec | 34.12 | 83.07 | 65.98 | 53.70 |
+| scimark_monte_carlo | ops_per_sec | 116.92 | 117.55 | 119.64 | 120.68 |
+| scimark_sor | ops_per_sec | 25.73 | 28.71 | 29.45 | 28.68 |
+| scimark_sparse_mat_mult | ops_per_sec | 23,726.40 | 26,366.97 | 27,957.93 | 27,426.93 |
+| spectral_norm | ops_per_sec | 34.20 | 53.41 | 51.87 | 39.15 |
+| telco | ops_per_sec | 6,460.51 | 7,200.65 | 7,013.80 | 7,183.17 |
+| unpickle_pure_python | ops_per_sec | 508,019.33 | 552,702.33 | 557,615.00 | 548,043.00 |
 
 ### 4.3 Latency (geomean vs. baseline, lower is better)
 
@@ -721,7 +773,7 @@ removes them (runtime `.rela.dyn`/`.rela.plt` are kept). Comparing raw file
 sizes therefore flatters BOLT output, which no longer carries those sections,
 so all deltas below use **stripped file size**, for both architectures.
 
-**x86_64 (stripped file size; rev `d0a877f`, 2026-09-17 re-validation)**
+**x86_64 (stripped file size; rev `d0a877f`, 2026-09-17 re-validation; CPython rows at rev `059e374`, 2026-09-18)**
 
 | App | Mode | baseline (bytes) | `bolt` (Δ) | `bolt-rewrite` (Δ) | `bolt-rewrite-nohuge` (Δ) |
 |---|---|---|---|---|---|
@@ -731,8 +783,8 @@ so all deltas below use **stripped file size**, for both architectures.
 | PostgreSQL | no-pie | 9,367,352 | 14,523,096 (**+55.0 %**) | 9,376,200 (**+0.1 %**) | 9,376,224 (**+0.1 %**) |
 | MongoDB | pie | 129,725,304 | 151,228,760 (**+16.6 %**) | 132,482,336 (**+2.1 %**) | 130,569,520 (**+0.7 %**) |
 | MongoDB | no-pie | 125,596,536 | 147,260,992 (**+17.3 %**) | 128,484,864 (**+2.3 %**) | 126,645,784 (**+0.8 %**) |
-| CPython | pie | 5,365,936 | 10,138,832 (**+89.0 %**) | rej. | rej. |
-| CPython | no-pie | 4,870,872 | 9,627,696 (**+97.7 %**) | rej. | rej. |
+| CPython | pie | 5,365,936 | 10,138,920 (**+89.0 %**) | 5,432,128 (**+1.2 %**) | 5,432,152 (**+1.2 %**) |
+| CPython | no-pie | 4,870,872 | 9,630,792 (**+97.7 %**) | 4,908,256 (**+0.8 %**) | 4,908,280 (**+0.8 %**) |
 
 **aarch64 (stripped file size; rev `d0a877f`, byte-identical to `d1723d9d`)**
 
@@ -938,6 +990,14 @@ outputs were left behind. For the three servers this is the first x86_64
 `-rewrite` validation at the fixed revision (the earlier gap noted in previous
 revisions of this report).
 
+**x86_64 CPython (2026-09-18, rev `059e374`, two instrumentation variants).**
+With the x86 computed-goto jump-table recognition (`8bba80ca2a95`), all eight
+CPython x86_64 targets (`bolt`, `-rewrite`, `-rewrite-nohuge` × pie/no-pie) are
+produced, pass `app_verify_bin` and complete the full pyperformance suite with
+**0 errors** — in the default skip-funcs-instrumentation session and in the
+full-profile (`PY_INSTR_SKIP_FUNCS=0`) session alike; no `.failed` outputs, no
+`BOLT-ERROR`. This is the first x86_64 CPython `-rewrite` validation.
+
 ---
 
 ## 5. Issues, caveats and notes
@@ -1019,15 +1079,14 @@ revisions of this report).
     mode with `PY_COMPUTED_GOTO=0` (switch-based eval loop) avoids it. The `pie`
     target (shared libpython) profiles fine with computed gotos on. On x86_64 no
     such workaround was needed.
-12. **CPython on x86_64 needs `-skip-funcs` in the optimization pass.** With
-    `-skip-funcs` removed from `BOLT_OPT_FLAGS` (the aarch64 setting), the
-    x86_64 optimization pass corrupts the computed-goto dispatch on any
-    revision (re-confirmed at `d0a877f`: the optimized library segfaults on the
-    first import). `apps/python/app.sh` therefore applies `-skip-funcs` to
-    `BOLT_OPT_FLAGS` on x86_64 only; since `d0a877f` BOLT rejects `-rewrite`
-    with `-skip-funcs`, the x86_64 `-rewrite`/`-rewrite-nohuge` variants fail
-    fast with `BOLT-ERROR` and the pipeline skips them — CPython x86_64 is
-    `bolt`-only by construction.
+12. **CPython on x86_64 needed `-skip-funcs` in the optimization pass (through
+    rev `d0a877f`).** With `-skip-funcs` removed from `BOLT_OPT_FLAGS`, the
+    x86_64 optimization pass corrupted the computed-goto dispatch (confirmed at
+    `d0a877f`: the optimized library segfaulted on the first import), and since
+    `d0a877f` BOLT rejects `-rewrite` with `-skip-funcs`, x86_64 CPython was
+    `bolt`-only by construction. Resolved by `8bba80ca2a95` (x86 computed-goto
+    jump-table recognition): at rev `059e374` the no-skip optimization pass is
+    correct on x86_64 and all four configurations run (2026-09-18, §4.5).
 13. **`optimize.sh` verification under `set -e`.** `run_bolt` runs with `set -e`
     active when invoked as a plain command (the required `bolt` variant), so a
     failing health check used to exit the script one command before `rc=$?`
@@ -1036,6 +1095,16 @@ revisions of this report).
     warn + `.failed`) always runs. Found during the 2026-09-17 x86_64
     re-validation when the first CPython `bolt` output failed its import smoke
     test (issue 12).
+15. **CPython instrumentation coverage knob (`PY_INSTR_SKIP_FUNCS`).** The
+    default skip-funcs instrumentation leaves the hottest function
+    (`_PyEval_EvalFrameDefault`) with no profile counters, capping what BOLT's
+    layout can do. With the x86 jump-table recognition in place, dropping
+    `-skip-funcs` from instrumentation is safe on x86_64: profile wall time was
+    unchanged (444 s vs 447 s) and `bolt` gained +1.1 pt (pie) / +5.2 pt
+    (no-pie). The knob defaults to `1` (skip) for cross-architecture
+    comparability until the same experiment runs on aarch64, where the
+    instrumented `no-pie` interpreter is known to be fragile under
+    computed-goto (issue 11).
 14. **MongoDB: dump-at-finalization profiling is not applicable (root-caused
     2026-09-18).** Two independent causes, in sequence:
     (a) `llvm-bolt -instrument` on mongod peaks at ~15.5-16.3 GB RSS and was
@@ -1116,9 +1185,10 @@ LLVM_SRC=$HOME/src/llvm-23.1.1 ./rebuild.sh exec env NOHUGE=1 PY_COMPUTED_GOTO=0
   BOLT_INSTRUMENT_EXTRA_FLAGS="--drop-cortex-a53-843419-veneers" \
   BOLT_OPT_FLAGS="<BOLT_FLAGS> --drop-cortex-a53-843419-veneers" \
   bash -c 'SKIP_BUILD=1 /harness/pipeline/run-all.sh pie no-pie'
-# `-skip-funcs` is applied to instrumentation only on aarch64 (app.sh), where
-#   -rewrite then works; on x86_64 app.sh keeps it in the optimization pass and
-#   BOLT rejects -rewrite (CPython x86_64 is bolt-only).
+# The optimization pass never skips functions (BOLT >= 8bba80ca2a95 recognizes
+#   the computed-goto tables on x86_64); -rewrite requires that.
+# Instrumentation skips by default; PY_INSTR_SKIP_FUNCS=0 profiles the eval
+#   loop too (larger gains, see §3.5/§5.15).
 # x86_64: omit the veneer flag and PY_COMPUTED_GOTO=0
 ```
 
