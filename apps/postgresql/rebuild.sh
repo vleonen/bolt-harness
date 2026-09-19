@@ -7,7 +7,7 @@
 #   ./rebuild.sh exec ...  run a command inside the container (env pre-set)
 #   ./rebuild.sh stop      stop and remove the container
 #
-# Overridable: LLVM_SRC (default ${HOME}/src/llvm-project),
+# Overridable: LLVM_SRC (default ${HOME}/src/llvm-23.1.1),
 #              LLVM_BUILD_DIR (default: auto-detected under LLVM_SRC),
 #              POSTGRES_VERSION (default REL_17_11),
 #              HARNESS_ROOT (default: repo root two levels up).
@@ -20,7 +20,7 @@ APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARNESS_ROOT="${HARNESS_ROOT:-$(cd "$APP_DIR/../.." && pwd)}"
 IMAGE="bolt-harness-postgresql:ubuntu24.04"
 NAME="bolt-harness-postgresql"
-LLVM_SRC="${LLVM_SRC:-${HOME}/src/llvm-project}"
+LLVM_SRC="${LLVM_SRC:-${HOME}/src/llvm-23.1.1}"
 POSTGRES_VERSION="${POSTGRES_VERSION:-REL_17_11}"
 # Per-app state root. The container runs as a non-root uid, so it cannot share
 # the root-owned work/ tree produced by other (root) app containers.

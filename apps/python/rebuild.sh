@@ -7,7 +7,7 @@
 #   ./rebuild.sh exec ...  run a command inside the container (env pre-set)
 #   ./rebuild.sh stop      stop and remove the container
 #
-# Overridable: LLVM_SRC (default ${HOME}/src/llvm-project),
+# Overridable: LLVM_SRC (default ${HOME}/src/llvm-23.1.1),
 #              LLVM_BUILD_DIR (default: auto-detected under LLVM_SRC),
 #              PYTHON_VERSION (default v3.13.9),
 #              HARNESS_ROOT (default: repo root two levels up).
@@ -17,7 +17,7 @@ APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARNESS_ROOT="${HARNESS_ROOT:-$(cd "$APP_DIR/../.." && pwd)}"
 IMAGE="bolt-harness-python:ubuntu24.04"
 NAME="bolt-harness-python"
-LLVM_SRC="${LLVM_SRC:-${HOME}/src/llvm-project}"
+LLVM_SRC="${LLVM_SRC:-${HOME}/src/llvm-23.1.1}"
 PYTHON_VERSION="${PYTHON_VERSION:-v3.13.9}"
 
 msg() { echo "==> $*"; }

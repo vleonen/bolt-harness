@@ -90,7 +90,7 @@ SKIP_BUILD=1 SKIP_PROFILE=1 SKIP_OPTIMIZE=1 \
 ```
 
 For LLVM 23 BOLT (matching the recorded results), run with
-`LLVM_SRC=$HOME/src/llvm-project-23`.
+`LLVM_SRC=$HOME/src/llvm-23.1.1` (the default since 2026-09-19).
 
 ### Build time and monitoring
 

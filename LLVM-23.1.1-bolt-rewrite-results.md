@@ -2,7 +2,10 @@
 
 Date: 2026-09-15 (aarch64 MongoDB/CPython added 2026-09-16; aarch64 re-validated at `d0a877f` on 2026-09-17; x86_64 re-validated at `d0a877f` on 2026-09-17 with re-instrumentation; CPython x86_64 re-evaluated at `059e374` on 2026-09-18)
 Harness: `bolt-harness`
-Tool under test: `llvm-bolt`, LLVM **23.1.1**, branch `llvmorg-23.1.1-rewrite`:
+Tool under test: `llvm-bolt`, LLVM **23.1.1**, branch `llvmorg-23.1.1-rewrite`
+(x86_64 checkout moved `$HOME/src/llvm-project-23` → `$HOME/src/llvm-23.1.1`
+on 2026-09-19, making the BOLT path uniform with aarch64; harness containers
+recreated against the new path):
 
 - **aarch64**: `$HOME/src/llvm-23.1.1/build/bin/llvm-bolt`, revision
   `d1723d9d8a4d763722331379ab265e94b6c3cb14` (34 `[BOLT][Rewrite]` commits
@@ -19,7 +22,8 @@ Tool under test: `llvm-bolt`, LLVM **23.1.1**, branch `llvmorg-23.1.1-rewrite`:
   baselines has TLS-family relocations and none uses `-skip-funcs`) — binary
   sizes are byte-identical and the re-benchmark deltas are within run-to-run
   noise (§4.1).
-- **x86_64**: `$HOME/src/llvm-project-23/build23/bin/llvm-bolt`, same branch.
+- **x86_64**: `$HOME/src/llvm-23.1.1/build23/bin/llvm-bolt`, same branch
+  (checkout at `$HOME/src/llvm-project-23` until 2026-09-19).
   The x86_64 set includes the fourth configuration, `bolt-rewrite-nohuge`. The
   whole x86_64 set was re-validated on 2026-09-17 with revision
   `d0a877fc33a1` (the same revision as aarch64; both architectures are now on
@@ -175,7 +179,7 @@ retained original code dominates the deployed size; see §4.4).
 | Kernel | 6.18.33.2-microsoft-standard-WSL2 |
 | Userspace | Ubuntu 24.04 (containers), GCC 13.3.0 |
 | Harness | `bolt-harness` (same as aarch64) |
-| BOLT | `$HOME/src/llvm-project-23/build23/bin/llvm-bolt` (LLVM 23.1.1; x86_64 results re-validated at rev `d0a877fc33a1`, 2026-09-17) |
+| BOLT | `$HOME/src/llvm-23.1.1/build23/bin/llvm-bolt` (LLVM 23.1.1; x86_64 results re-validated at rev `d0a877fc33a1`, 2026-09-17) |
 | Workload generators | sysbench (MariaDB), pgbench (PostgreSQL), YCSB (MongoDB) |
 | MongoDB build | Ubuntu 24.04 container, GCC 12.4, deadsnakes Python 3.10, MongoDB 7.0 `r7.0.43` (SCons) |
 
@@ -1034,7 +1038,8 @@ full-profile (`PY_INSTR_SKIP_FUNCS=0`) session alike; no `.failed` outputs, no
    bolt-rewrite (and, with `NOHUGE=1`, bolt-rewrite-nohuge) benched
    back-to-back, and are only comparable within one architecture.
 6. **Containers.** The aarch64 containers mount `$HOME/src/llvm-23.1.1` at
-   `/llvm:ro`; the x86_64 containers mount `$HOME/src/llvm-project-23`.
+   `/llvm:ro`; the x86_64 containers mount `$HOME/src/llvm-23.1.1`
+   (moved from `$HOME/src/llvm-project-23` on 2026-09-19).
    Previous result directories are preserved.
 7. **Build-id** is patched (last bit flipped) by both `bolt` and
    `bolt-rewrite` on both architectures.
@@ -1133,7 +1138,7 @@ full-profile (`PY_INSTR_SKIP_FUNCS=0`) session alike; no `.failed` outputs, no
 ```bash
 # 0. Tools under test
 $HOME/src/llvm-23.1.1/build/bin/llvm-bolt --version       # aarch64, rev d0a877f
-$HOME/src/llvm-project-23/build23/bin/llvm-bolt --version # x86_64,  rev d1723d9d
+$HOME/src/llvm-23.1.1/build23/bin/llvm-bolt --version  # x86_64,  rev 059e374
 
 # 1. Point each harness container at the build for the target host
 #    (aarch64 example)
@@ -1141,7 +1146,7 @@ cd $HOME/src/bolt-harness/apps/mariadb
 LLVM_SRC=$HOME/src/llvm-23.1.1 ./rebuild.sh
 cd ../postgresql
 LLVM_SRC=$HOME/src/llvm-23.1.1 ./rebuild.sh
-#    x86_64: same with LLVM_SRC=$HOME/src/llvm-project-23
+#    x86_64: same with LLVM_SRC=$HOME/src/llvm-23.1.1
 
 # 2. Run the full pipeline for each app/mode (example: MariaDB pie, aarch64)
 BOLT_FLAGS='-reorder-blocks=ext-tsp -reorder-functions=hfsort -split-functions
@@ -1165,8 +1170,8 @@ MongoDB uses its own container; the adapter appends
 
 ```bash
 cd $HOME/src/bolt-harness/apps/mongodb
-LLVM_SRC=$HOME/src/llvm-project-23 ./rebuild.sh          # x86_64: image + clone + venv + YCSB
-LLVM_SRC=$HOME/src/llvm-project-23 ./rebuild.sh exec \
+LLVM_SRC=$HOME/src/llvm-23.1.1 ./rebuild.sh          # x86_64: image + clone + venv + YCSB
+LLVM_SRC=$HOME/src/llvm-23.1.1 ./rebuild.sh exec \
   /harness/pipeline/run-all.sh pie no-pie
 # aarch64: use LLVM_SRC=$HOME/src/llvm-23.1.1 and pass the veneer flag, e.g.
 #   BOLT_INSTRUMENT_EXTRA_FLAGS=--drop-cortex-a53-843419-veneers

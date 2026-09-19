@@ -9,7 +9,7 @@
 #   ./rebuild.sh exec ...  run a command inside the container (env pre-set)
 #   ./rebuild.sh stop      stop and remove the container
 #
-# Overridable: LLVM_SRC (default ${HOME}/src/llvm-project),
+# Overridable: LLVM_SRC (default ${HOME}/src/llvm-23.1.1),
 #              LLVM_BUILD_DIR (default: auto-detected under LLVM_SRC),
 #              MONGODB_VERSION (default r7.0.43),
 #              YCSB_REF (default master),
@@ -20,7 +20,7 @@ APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARNESS_ROOT="${HARNESS_ROOT:-$(cd "$APP_DIR/../.." && pwd)}"
 IMAGE="bolt-harness-mongodb:ubuntu24.04"
 NAME="bolt-harness-mongodb"
-LLVM_SRC="${LLVM_SRC:-${HOME}/src/llvm-project}"
+LLVM_SRC="${LLVM_SRC:-${HOME}/src/llvm-23.1.1}"
 MONGODB_VERSION="${MONGODB_VERSION:-r7.0.43}"
 YCSB_REF="${YCSB_REF:-master}"
 MONGO_WORK="$HARNESS_ROOT/work"
